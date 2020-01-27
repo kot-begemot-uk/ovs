@@ -34,6 +34,7 @@
 #include "ovs-router.h"
 #include "packets.h"
 #include "openvswitch/vlog.h"
+#include "openvswitch/poll-loop.h"
 #include "util.h"
 
 VLOG_DEFINE_THIS_MODULE(route_table_bsd);
@@ -113,7 +114,7 @@ retry:
 
         memset(&pfd, 0, sizeof(pfd));
         pfd.fd = rtsock;
-        pfd.events = POLLIN;
+        pfd.events = OVS_POLLIN;
         /*
          * The timeout value below is somehow arbitrary.
          * It's to detect the lost of routing messages due to
