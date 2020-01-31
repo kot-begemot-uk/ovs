@@ -279,6 +279,7 @@ static void
 pfd_close(struct pstream *pstream)
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
+    poll_fd_deregister(ps->fd);
     closesocket(ps->fd);
     maybe_unlink_and_free(ps->unlink_path);
     free(ps);
