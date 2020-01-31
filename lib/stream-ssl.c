@@ -771,6 +771,8 @@ ssl_send(struct stream *stream, const void *buffer, size_t n)
             ssl_clear_txbuf(sslv);
             return n;
         case EAGAIN:
+            /* we want to know when this fd will become available again */
+            stream_send_wait(stream);
             return n;
         default:
             ssl_clear_txbuf(sslv);

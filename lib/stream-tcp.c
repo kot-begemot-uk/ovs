@@ -43,6 +43,7 @@ new_tcp_stream(char *name, int fd, int connect_status, struct stream **streamp)
 {
     if (connect_status == 0) {
         setsockopt_tcp_nodelay(fd);
+        setsockopt_tcp_keepalive(fd);
     }
 
     return new_fd_stream(name, fd, connect_status, AF_INET, streamp);

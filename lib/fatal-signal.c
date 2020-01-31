@@ -96,6 +96,7 @@ fatal_signal_init(void)
         ovs_mutex_init_recursive(&mutex);
 #ifndef _WIN32
         xpipe_nonblocking(signal_fds);
+        poll_fd_register(signal_fds[0], OVS_POLLIN);
 #else
         wevent = CreateEvent(NULL, TRUE, FALSE, NULL);
         if (!wevent) {

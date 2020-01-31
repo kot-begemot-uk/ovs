@@ -292,7 +292,7 @@ fi
 run ovs-vsctl --no-wait -- init
 
 # Start ovs-vswitchd.
-rungdb $gdb_vswitchd $gdb_vswitchd_ex ovs-vswitchd --detach --no-chdir --pidfile -vconsole:off --log-file -vsyslog:off \
+rungdb $gdb_vswitchd $gdb_vswitchd_ex ovs-vswitchd --detach -vpoll_loop --no-chdir --pidfile -vconsole:off --log-file -vsyslog:off \
     --enable-dummy=$dummy -vvconn -vnetdev_dummy
 
 cat <<EOF

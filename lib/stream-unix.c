@@ -47,8 +47,10 @@ unix_open(const char *name, char *suffix, struct stream **streamp,
     char *connect_path;
     int fd;
 
+
     connect_path = abs_file_name(ovs_rundir(), suffix);
     fd = make_unix_socket(SOCK_STREAM, true, NULL, connect_path);
+    VLOG_DBG("connection to %s", connect_path);
 
     if (fd < 0) {
         VLOG_DBG("%s: connection failed (%s)",

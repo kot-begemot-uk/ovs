@@ -68,6 +68,8 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     s->fd = fd;
     s->fd_type = fd_type;
     *streamp = &s->stream;
+    /* Persistent registration on OSes which support it */
+    poll_fd_register(s->fd, OVS_POLLIN);
     return 0;
 }
 
@@ -82,6 +84,8 @@ static void
 fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
+    /* Deregister the FD from any persistent registrations if supported */
+    poll_fd_deregister(s->fd);
     closesocket(s->fd);
     free(s);
 }
@@ -93,6 +97,7 @@ fd_connect(struct stream *stream)
     int retval = check_connection_completion(s->fd);
     if (retval == 0 && s->fd_type == AF_INET) {
         setsockopt_tcp_nodelay(s->fd);
+        setsockopt_tcp_keepalive(s->fd);
     }
     return retval;
 }
@@ -130,6 +135,14 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     retval = send(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
+#ifdef __linux__
+        /* Linux will sometimes return ENOBUFS on sockets instead of EAGAIN. Usually seen
+         *  on unix domain sockets 
+         */
+        if (error == ENOBUFS) {
+           error = EAGAIN;
+        }
+#endif
 #ifdef _WIN32
         if (error == WSAEWOULDBLOCK) {
            error = EAGAIN;
@@ -223,6 +236,8 @@ new_fd_pstream(char *name, int fd,
     ps->accept_cb = accept_cb;
     ps->unlink_path = unlink_path;
     *pstreamp = &ps->pstream;
+    /* Register fd with any long term persistence frameworks if available */
+    poll_fd_register(ps->fd, OVS_POLLIN);
     return 0;
 }
 

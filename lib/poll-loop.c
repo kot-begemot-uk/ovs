@@ -21,6 +21,9 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #endif
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,6 +88,57 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
     }
     return NULL;
 }
+/* Registers 'fd' as waiting for the specified 'events' (which should be OVS_POLLIN
+ * or OVS_POLLOUT or OVS_POLLIN | OVS_POLLOUT).  The following call to poll_block() will
+ * wake up when 'fd' becomes ready for one or more of the requested events.
+ *
+ * The event registration is PERSISTENT. This is intended for OSes which have a persistent
+ * event framework. For now it is implemented only for epoll and Linux, other
+ * implementations such as BSD kqueue and Solaris /dev/poll may follow.
+ *
+ * If the OS has no persistent even framework does nothing
+ *
+ * ('where' is used in debug logging.  Commonly one would use poll_fd_wait() to
+ * automatically provide the caller's source file and line number for
+ * 'where'.) */
+
+void
+poll_fd_register_at(int fd, short int events, const char *where)
+{
+#ifdef __linux__
+    struct poll_loop *loop = poll_loop();
+    struct poll_node *node;
+    struct epoll_event event;
+
+    VLOG(VLL_DBG, "persistent registration of %d from %s", fd, where);
+
+    /* Check for duplicate.  If found, "or" the events. */
+    node = find_poll_node(loop, fd, 0);
+    if (node) {
+        int old_event_mask = node->pollfd.events;
+
+        node->pollfd.events |= events;
+        if (old_event_mask != node->pollfd.events) {
+            event.events = node->pollfd.events;
+            event.data.ptr = node;
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_MOD, fd, &event);
+        }
+    } else {
+        node = xzalloc(sizeof *node);
+        hmap_insert(&loop->poll_nodes, &node->hmap_node,
+                    hash_2words(fd, 0));
+        node->pollfd.fd = fd;
+        node->pollfd.events = events;
+        node->wevent = 0;
+        node->where = where;
+
+        event.events = node->pollfd.events;
+        event.data.ptr = node;
+        epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, fd, &event);
+    }
+#endif
+}
+
 
 /* On Unix based systems:
  *
@@ -108,14 +162,11 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
  * ('where' is used in debug logging.  Commonly one would use poll_fd_wait() to
  * automatically provide the caller's source file and line number for
  * 'where'.) */
-static struct poll_node
-*poll_create_node(int fd, HANDLE wevent, short int events, const char *where)
+static void
+poll_create_node(int fd, HANDLE wevent, short int events, const char *where)
 {
     struct poll_loop *loop = poll_loop();
     struct poll_node *node;
-#ifdef __linux__
-    struct epoll_event event;
-#endif
 
     COVERAGE_INC(poll_create_node);
 
@@ -124,17 +175,7 @@ static struct poll_node
 
     /* Check for duplicate.  If found, "or" the events. */
     node = find_poll_node(loop, fd, wevent);
-    if (node) {
-#ifdef __linux__
-        int old_event_mask = node->pollfd.events;
-        node->pollfd.events |= events;
-        if (old_event_mask != node->pollfd.events) {
-            event.events = node->pollfd.events;
-            event.data.ptr = node;
-            epoll_ctl(loop->epoll_fd, EPOLL_CTL_MOD, fd, &event);
-        }
-#endif
-    } else {
+    if (!node) {
         node = xzalloc(sizeof *node);
         hmap_insert(&loop->poll_nodes, &node->hmap_node,
                     hash_2words(fd, (uint32_t)wevent));
@@ -147,33 +188,44 @@ static struct poll_node
 #endif
         node->wevent = wevent;
         node->where = where;
-#ifdef __linux__
-        event.events = node->pollfd.events;
-        event.data.ptr = node;
-        epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, fd, &event);
-#endif
     }
-    return node;
 }
 
-/* Registers 'fd' as waiting for the specified 'events' (which should be OVS_POLLIN
- * or OVS_POLLOUT or OVS_POLLIN | OVS_POLLOUT).  The following call to poll_block() will
- * wake up when 'fd' becomes ready for one or more of the requested events.
- *
- * On Windows, 'fd' must be a socket.
- *
- * The event registration is one-shot: only the following call to poll_block()
- * is affected.  The event will need to be re-registered after poll_block() is
- * called if it is to persist.
- *
- * ('where' is used in debug logging.  Commonly one would use poll_fd_wait() to
- * automatically provide the caller's source file and line number for
- * 'where'.) */
+/* Deregisters a fd for OSes which have persistent IO event frameworks */
+
+void
+poll_fd_deregister_at(int fd, const char *where)
+{
+#ifdef __linux__
+    struct poll_loop *loop = poll_loop();
+    struct poll_node *node, *next;
+
+    VLOG(VLL_DBG, "Deregister %d from %s", fd, where);
+    HMAP_FOR_EACH_SAFE (node, next, hmap_node, &loop->poll_nodes) {
+        if (fd == node->pollfd.fd) {
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_DEL, node->pollfd.fd, NULL);
+            hmap_remove(&loop->poll_nodes, &node->hmap_node);
+            free(node);
+            return;
+        }
+    }
+#endif
+}
+
+
 void
 poll_fd_wait_at(int fd, short int events, const char *where)
 {
+#ifdef __linux__
+    /* on linux all pollfds are registered with epoll at creation for POLLIN */
+    if (events & OVS_POLLOUT) {
+        poll_fd_register_at(fd, events, where);
+    }
+#else
     poll_create_node(fd, 0, events, where);
+#endif
 }
+
 
 #ifdef _WIN32
 /* Registers for the next call to poll_block() to wake up when 'wevent' is
@@ -324,6 +376,7 @@ log_wakeup(const char *where, const struct pollfd *pollfd, int timeout)
     ds_destroy(&s);
 }
 
+
 static void
 free_poll_nodes(struct poll_loop *loop)
 {
@@ -383,20 +436,25 @@ poll_block(void)
         VLOG_ERR_RL(&rl, "epoll: %s", ovs_strerror(retval));
     } else if (!retval) {
         log_wakeup(loop->timeout_where, NULL, elapsed);
-    } else if (get_cpu_usage() > 50 || VLOG_IS_DBG_ENABLED()) {
+    } else {
         for (i = 0; i < retval; i++) {
-            struct epoll_event event;
             node = (struct poll_node *) loop->epoll_events[i].data.ptr;
-            if (loop->epoll_events[i].events | OVS_POLLOUT) {
-                /* treat a POLLOUT as a ONESHOT, reads and err persist */
-                node->pollfd.events &= ~OVS_POLLOUT;
+            if (loop->epoll_events[i].events & OVS_POLLOUT) {
+                struct epoll_event event;
+
+                node->pollfd.events = OVS_POLLIN; /* reset back to defaults - write needs one shot */
                 event.events = node->pollfd.events;
                 event.data.ptr = node;
                 epoll_ctl(loop->epoll_fd, EPOLL_CTL_MOD, node->pollfd.fd, &event);
             }
-            if (loop->epoll_events[i].events) {
-                node->pollfd.revents = loop->epoll_events[i].events;
-                log_wakeup(node->where, &node->pollfd, 0);
+        }
+        if (get_cpu_usage() > 50 || VLOG_IS_DBG_ENABLED()) {
+            for (i = 0; i < retval; i++) {
+                node = (struct poll_node *) loop->epoll_events[i].data.ptr;
+                    if (loop->epoll_events[i].events) {
+                    node->pollfd.revents = loop->epoll_events[i].events;
+                    log_wakeup(node->where, &node->pollfd, 0);
+                }
             }
         }
     }

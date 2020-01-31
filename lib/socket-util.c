@@ -114,6 +114,30 @@ setsockopt_tcp_nodelay(int fd)
     }
 }
 
+void
+setsockopt_tcp_keepalive(int fd)
+{
+    int on = 1;
+    int retval;
+/* if the system has TCP keepalives enable them, otherwise do nothing */
+#ifdef SO_KEEPALIVE
+    retval = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(SO_KEEPALIVE): %s", sock_strerror(retval));
+    }
+#endif
+/* if the system allows tuning keepalives drop them to a lower value (default is 75s) */
+#ifdef TCP_KEEPIDLE
+    on = 5; /* We should really make this tunable */
+    retval = setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &on, sizeof on);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(TCP_KEEPIDLE): %s", sock_strerror(retval));
+    }
+#endif
+}
+
 /* Sets the DSCP value of socket 'fd' to 'dscp', which must be 63 or less.
  * 'family' must indicate the socket's address family (AF_INET or AF_INET6, to
  * do anything useful). */

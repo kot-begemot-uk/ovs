@@ -2295,12 +2295,15 @@ static int
 dpif_netlink_handler_init(struct dpif_handler *handler)
 {
     handler->epoll_fd = epoll_create(10);
+    /* we should consider merging this into the main epoll loop on Linux */
+    poll_fd_register(handler->epoll_fd, OVS_POLLIN);
     return handler->epoll_fd < 0 ? errno : 0;
 }
 
 static void
 dpif_netlink_handler_uninit(struct dpif_handler *handler)
 {
+    poll_fd_deregister(handler->epoll_fd);
     close(handler->epoll_fd);
 }
 #endif
