@@ -1152,7 +1152,7 @@ netdev_linux_rxq_construct(struct netdev_rxq *rxq_)
     /* Register with persistent event frameworks if available - this
      * should be able to grab both raw and tap cases
      */
-    poll_fd_register(rx->fd, OVS_POLLIN);
+    poll_fd_register(rx->fd, OVS_POLLIN, NULL);
     ovs_mutex_unlock(&netdev->mutex);
 
     return 0;

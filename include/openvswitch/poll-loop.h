@@ -73,8 +73,8 @@ extern "C" {
  * caller to supply a location explicitly, which is useful if the caller's own
  * caller would be more useful in log output.  See timer_wait_at() for an
  * example. */
-void poll_fd_register_at(int fd, short int events, const char *where);
-#define poll_fd_register(fd, events) poll_fd_register_at(fd, events, OVS_SOURCE_LOCATOR)
+void poll_fd_register_at(int fd, short int events, struct pollfd **hint, const char *where);
+#define poll_fd_register(fd, events, hint) poll_fd_register_at(fd, events, hint, OVS_SOURCE_LOCATOR)
 
 void poll_fd_deregister_at(int fd, const char *where);
 #define poll_fd_deregister(fd) poll_fd_deregister_at(fd, OVS_SOURCE_LOCATOR)

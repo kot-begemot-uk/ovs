@@ -40,6 +40,8 @@ struct stream_fd
     struct stream stream;
     int fd;
     int fd_type;
+    bool rx_ready, tx_ready;
+    struct pollfd *hint;
 };
 
 static const struct stream_class stream_fd_class;
@@ -67,9 +69,12 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
     s->fd = fd;
     s->fd_type = fd_type;
+    s->rx_ready = true;
+    s->tx_ready = true;
+    s->hint = NULL;
     *streamp = &s->stream;
     /* Persistent registration on OSes which support it */
-    poll_fd_register(s->fd, OVS_POLLIN);
+    poll_fd_register(s->fd, OVS_POLLIN, &s->hint);
     return 0;
 }
 
@@ -109,6 +114,19 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    if (s->hint) {
+        /* poll-loop is providing us with hints for IO */
+        if (!s->rx_ready) {
+            if (!(s->hint->revents & OVS_POLLIN)) {
+                return -EAGAIN;
+            } else {
+                /* POLLIN event from poll loop, mark us as ready */
+                s->rx_ready = true;
+                s->hint->revents &= ~OVS_POLLIN;
+            }
+        }
+    }
+
     retval = recv(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
@@ -119,6 +137,8 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
 #endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "recv: %s", sock_strerror(error));
+        } else {
+            s->rx_ready = false;
         }
         return -error;
     }
@@ -132,6 +152,18 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    if (s->hint) {
+        /* poll-loop is providing us with hints for IO */
+        if (!s->tx_ready) {
+            if (!(s->hint->revents & OVS_POLLOUT)) {
+                return -EAGAIN;
+            } else {
+                /* POLLOUT event from poll loop, mark us as ready */
+                s->tx_ready = true;
+                s->hint->revents &= ~OVS_POLLOUT;
+            }
+        }
+    }
     retval = send(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
@@ -150,6 +182,8 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
 #endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "send: %s", sock_strerror(error));
+        } else {
+            s->tx_ready = false;
         }
         return -error;
     }
@@ -237,7 +271,7 @@ new_fd_pstream(char *name, int fd,
     ps->unlink_path = unlink_path;
     *pstreamp = &ps->pstream;
     /* Register fd with any long term persistence frameworks if available */
-    poll_fd_register(ps->fd, OVS_POLLIN);
+    poll_fd_register(ps->fd, OVS_POLLIN, NULL);
     return 0;
 }
 

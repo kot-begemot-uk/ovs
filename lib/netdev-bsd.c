@@ -366,7 +366,7 @@ netdev_bsd_construct_tap(struct netdev *netdev_)
 
     netdev->kernel_name = kernel_name;
     /* BSD does not implement this yet so this is a noop at this point */
-    poll_fd_register(netdev->tap_fd, OVS_POLLIN);
+    poll_fd_register(netdev->tap_fd, OVS_POLLIN, NULL);
 
     return 0;
 
@@ -463,7 +463,7 @@ netdev_bsd_open_pcap(const char *name, pcap_t **pcapp, int *fdp)
 
     *pcapp = pcap;
     *fdp = fd;
-    poll_fd_register(fd, OVS_POLLIN);
+    poll_fd_register(fd, OVS_POLLIN, NULL);
     return 0;
 
 error:

@@ -231,7 +231,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
 #endif
 
     /* Register socket persistently where supported */
-    poll_fd_register(sock->fd, OVS_POLLIN);
+    poll_fd_register(sock->fd, OVS_POLLIN, NULL);
 
     *sockp = sock;
     return 0;

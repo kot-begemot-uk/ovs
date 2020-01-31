@@ -103,7 +103,7 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
  * 'where'.) */
 
 void
-poll_fd_register_at(int fd, short int events, const char *where)
+poll_fd_register_at(int fd, short int events,  struct pollfd **hint, const char *where)
 {
 #ifdef __linux__
     struct poll_loop *loop = poll_loop();
@@ -135,6 +135,9 @@ poll_fd_register_at(int fd, short int events, const char *where)
         event.events = node->pollfd.events;
         event.data.ptr = node;
         epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, fd, &event);
+    }
+    if (hint) {
+        *hint = &node->pollfd;
     }
 #endif
 }
@@ -219,7 +222,7 @@ poll_fd_wait_at(int fd, short int events, const char *where)
 #ifdef __linux__
     /* on linux all pollfds are registered with epoll at creation for POLLIN */
     if (events & OVS_POLLOUT) {
-        poll_fd_register_at(fd, events, where);
+        poll_fd_register_at(fd, events, NULL, where);
     }
 #else
     poll_create_node(fd, 0, events, where);
@@ -439,6 +442,9 @@ poll_block(void)
     } else {
         for (i = 0; i < retval; i++) {
             node = (struct poll_node *) loop->epoll_events[i].data.ptr;
+            if (loop->epoll_events[i].events) {
+                node->pollfd.revents |= loop->epoll_events[i].events;
+            }
             if (loop->epoll_events[i].events & OVS_POLLOUT) {
                 struct epoll_event event;
 
@@ -451,7 +457,7 @@ poll_block(void)
         if (get_cpu_usage() > 50 || VLOG_IS_DBG_ENABLED()) {
             for (i = 0; i < retval; i++) {
                 node = (struct poll_node *) loop->epoll_events[i].data.ptr;
-                    if (loop->epoll_events[i].events) {
+                if (loop->epoll_events[i].events) {
                     node->pollfd.revents = loop->epoll_events[i].events;
                     log_wakeup(node->where, &node->pollfd, 0);
                 }

@@ -29,7 +29,7 @@ latch_init(struct latch *latch)
 {
     xpipe_nonblocking(latch->fds);
     /* Register socket persistently where supported */
-    poll_fd_register(latch->fds[0], OVS_POLLIN);
+    poll_fd_register(latch->fds[0], OVS_POLLIN, NULL);
 }
 
 /* Destroys 'latch'. */
