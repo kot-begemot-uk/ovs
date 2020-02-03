@@ -28,8 +28,7 @@ void
 latch_init(struct latch *latch)
 {
     xpipe_nonblocking(latch->fds);
-    /* Register socket persistently where supported */
-    poll_fd_register(latch->fds[0], OVS_POLLIN, NULL);
+    poll_fd_register(latch->fds[0], OVS_POLLIN, NULL); /* register, but not set any events */
 }
 
 /* Destroys 'latch'. */
@@ -70,12 +69,12 @@ latch_is_set(const struct latch *latch)
     int retval;
 
     pfd.fd = latch->fds[0];
-    pfd.events = OVS_POLLIN;
+    pfd.events = POLLIN;
     do {
         retval = poll(&pfd, 1, 0);
     } while (retval < 0 && errno == EINTR);
 
-    return pfd.revents & OVS_POLLIN;
+    return pfd.revents & POLLIN;
 }
 
 /* Causes the next poll_block() to wake up when 'latch' is set.
@@ -86,5 +85,6 @@ latch_is_set(const struct latch *latch)
 void
 latch_wait_at(const struct latch *latch, const char *where)
 {
+    /* Ask for wait and make it one-shot if persistence is in play */
     poll_fd_wait_at(latch->fds[0], OVS_POLLIN, where);
 }

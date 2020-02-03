@@ -110,7 +110,7 @@ poll_fd_register_at(int fd, short int events,  struct pollfd **hint, const char 
     struct poll_node *node;
     struct epoll_event event;
 
-    VLOG(VLL_DBG, "persistent registration of %d from %s", fd, where);
+    VLOG(VLL_DBG, "persistent registration of %d with %d from %s", fd, events, where);
 
     /* Check for duplicate.  If found, "or" the events. */
     node = find_poll_node(loop, fd, 0);
@@ -221,7 +221,8 @@ poll_fd_wait_at(int fd, short int events, const char *where)
 {
 #ifdef __linux__
     /* on linux all pollfds are registered with epoll at creation for POLLIN */
-    if (events & OVS_POLLOUT) {
+    if (events & (OVS_POLLOUT | OVS_ONESHOT)) {
+        VLOG(VLL_DBG, "register %d with %d from %s", fd, events, where);
         poll_fd_register_at(fd, events, NULL, where);
     }
 #else
