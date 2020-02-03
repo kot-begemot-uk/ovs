@@ -704,13 +704,13 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
      if (sslv->hint) {
         /* poll-loop is providing us with hints for IO */
         if (sslv->rx_want == SSL_READING) {
-            if (!(s->hint->revents & OVS_POLLIN)) {
+            if (!(sslv->hint->revents & OVS_POLLIN)) {
                 return -EAGAIN;
             } else {
                 /* POLLIN event from poll loop, mark us as ready 
                  * rx_want is cleared further down by reading ssl fsm
                  */
-                s->hint->revents &= ~OVS_POLLIN;
+                sslv->hint->revents &= ~OVS_POLLIN;
             }
         }
     }
@@ -751,13 +751,13 @@ ssl_do_tx(struct stream *stream)
      if (sslv->hint) {
         /* poll-loop is providing us with hints for IO */
         if (sslv->tx_want == SSL_WRITING) {
-            if (!(s->hint->revents & OVS_POLLOUT)) {
+            if (!(sslv->hint->revents & OVS_POLLOUT)) {
                 return EAGAIN;
             } else {
                 /* POLLIN event from poll loop, mark us as ready 
                  * rx_want is cleared further down by reading ssl fsm
                  */
-                s->hint->revents &= ~OVS_POLLOUT;
+                sslv->hint->revents &= ~OVS_POLLOUT;
             }
         }
     }
