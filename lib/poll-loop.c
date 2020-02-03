@@ -103,7 +103,7 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
  * 'where'.) */
 
 void
-poll_fd_register_at(int fd, short int events,  struct pollfd **hint, const char *where)
+poll_fd_register_at(int fd, int events,  struct pollfd **hint, const char *where)
 {
 #ifdef __linux__
     struct poll_loop *loop = poll_loop();
@@ -217,7 +217,7 @@ poll_fd_deregister_at(int fd, const char *where)
 
 
 void
-poll_fd_wait_at(int fd, short int events, const char *where)
+poll_fd_wait_at(int fd, int events, const char *where)
 {
 #ifdef __linux__
     /* on linux all pollfds are registered with epoll at creation for POLLIN */
