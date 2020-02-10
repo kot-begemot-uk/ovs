@@ -64,7 +64,6 @@ struct hook {
 static struct hook hooks[MAX_HOOKS];
 static size_t n_hooks;
 
-static int signal_fds[2];
 static volatile sig_atomic_t stored_sig_nr = SIG_ATOMIC_MAX;
 
 #ifdef _WIN32
@@ -94,10 +93,7 @@ fatal_signal_init(void)
         inited = true;
 
         ovs_mutex_init_recursive(&mutex);
-#ifndef _WIN32
-        xpipe_nonblocking(signal_fds);
-        poll_fd_register(signal_fds[0], OVS_POLLIN, NULL);
-#else
+#ifdef _WIN32 
         wevent = CreateEvent(NULL, TRUE, FALSE, NULL);
         if (!wevent) {
             char *msg_buf = ovs_lasterror_to_string();
@@ -125,7 +121,7 @@ fatal_signal_init(void)
 #endif
         }
         atexit(fatal_signal_atexit_handler);
-    }
+    } 
 }
 
 /* Registers 'hook_cb' to be called from inside poll_block() following a fatal
@@ -215,7 +211,6 @@ fatal_signal_handler(int sig_nr)
         send_backtrace_to_monitor();
         raise(sig_nr);
     }
-    ignore(write(signal_fds[1], "", 1));
 #else
     SetEvent(wevent);
 #endif
@@ -237,11 +232,8 @@ void
 fatal_signal_run(void)
 {
     sig_atomic_t sig_nr;
-    char sigbuffer[_POSIX_PIPE_BUF];
 
     fatal_signal_init();
-
-    read(signal_fds[0], sigbuffer, sizeof(sigbuffer));
 
     sig_nr = stored_sig_nr;
     if (sig_nr != SIG_ATOMIC_MAX) {
@@ -275,7 +267,7 @@ fatal_signal_wait(void)
 #ifdef _WIN32
     poll_wevent_wait(wevent);
 #else
-    poll_fd_wait(signal_fds[0], OVS_POLLIN);
+    fatal_signal_run();
 #endif
 }
 

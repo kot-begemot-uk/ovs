@@ -278,9 +278,6 @@ time_alarm(unsigned int secs)
  *
  *      - On error, returns a negative error code (instead of setting errno).
  *
- *      - If interrupted by a signal, retries automatically until the original
- *        timeout is reached.  (Because of this property, this function will
- *        never return -EINTR.)
  *
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
@@ -360,7 +357,9 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
             break;
         }
 
-        if (retval != -EINTR) {
+        if (retval == -EINTR) {
+            fatal_signal_run();
+        } else {
             break;
         }
     }
@@ -378,10 +377,6 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
  *        time_msec(), instead of a duration.
  *
  *      - On error, returns a negative error code (instead of setting errno).
- *
- *      - If interrupted by a signal, retries automatically until the original
- *        timeout is reached.  (Because of this property, this function will
- *        never return -EINTR.)
  *
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
@@ -441,7 +436,9 @@ time_epoll_wait(int epoll_fd, struct epoll_event *events, int max,
             break;
         }
 
-        if (retval != -EINTR) {
+        if (retval == -EINTR) {
+            fatal_signal_run();
+        } else {
             break;
         }
     }
