@@ -33,6 +33,8 @@
 #ifndef POLL_LOOP_H
 #define POLL_LOOP_H 1
 
+#include <stdbool.h>
+
 #ifndef _WIN32
 #include <poll.h>
 #endif
@@ -44,6 +46,24 @@
 #ifdef  __cplusplus
 extern "C" {
 #endif
+
+/* Register a fd with a persistence framework if available so it can be served
+ * "faster" and the caller can be provided with "hints" on what caused the IO
+ * event.
+ * If the "hint" argument is supplied it set to point to the pollfd structure
+ * containing the events passed by the OS in .revents. 
+ * returns false if persistence is not enabled.
+ */
+
+bool poll_fd_register_at(int fd, int events, struct pollfd **hint, const char *where);
+#define poll_fd_register(fd, events, hint) poll_fd_register_at(fd, events, hint, OVS_SOURCE_LOCATOR)
+
+/* De-register a fd which was registered as "private" with the persistence
+ * framework
+ */
+
+void poll_fd_deregister_at(int fd, const char *where);
+#define poll_fd_deregister(fd) poll_fd_deregister_at(fd, OVS_SOURCE_LOCATOR)
 
 
 /* Schedule events to wake up the following poll_block().
@@ -57,6 +77,15 @@ extern "C" {
  * example. */
 void poll_fd_wait_at(int fd, short int events, const char *where);
 #define poll_fd_wait(fd, events) poll_fd_wait_at(fd, events, OVS_SOURCE_LOCATOR)
+
+/* Schedule events to wake up the following poll_block() - "private fds"
+ * Same as poll_fd_wait, but for fds which have been registered and are
+ * expected to persist. If a "fast" OS fd notification framework is used
+ * this version of wait may be a NOOP (f.e. for (E)POLLIN events.
+ */
+void private_poll_fd_wait_at(int fd, int events, const char *where);
+#define private_poll_fd_wait(fd, events) private_poll_fd_wait_at(fd, events, OVS_SOURCE_LOCATOR)
+
 
 #ifdef _WIN32
 void poll_wevent_wait_at(HANDLE wevent, const char *where);
@@ -75,6 +104,10 @@ void poll_immediate_wake_at(const char *where);
 
 /* Wait until an event occurs. */
 void poll_block(void);
+
+/* Enable persistence for this thread's poll loop */
+void poll_enable_persist(void);
+
 
 #ifdef  __cplusplus
 }

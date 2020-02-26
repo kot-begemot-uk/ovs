@@ -182,6 +182,7 @@ main_loop(struct server_config *config,
     *exiting = false;
     ssl_error = NULL;
     remotes_error = NULL;
+    poll_enable_persist();
     while (!*exiting) {
         memory_run();
         if (memory_should_report()) {

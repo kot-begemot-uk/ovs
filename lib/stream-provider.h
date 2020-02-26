@@ -18,6 +18,7 @@
 #define STREAM_PROVIDER_H 1
 
 #include <sys/types.h>
+#include <poll.h>
 #include "stream.h"
 
 /* Active stream connection. */
@@ -31,6 +32,8 @@ struct stream {
     int error;
     char *name;
     char *peer_id;
+    bool persist, rx_ready, tx_ready;
+    struct pollfd *hint;
 };
 
 void stream_init(struct stream *, const struct stream_class *,
@@ -133,6 +136,7 @@ struct pstream {
     const struct pstream_class *class;
     char *name;
     ovs_be16 bound_port;
+    bool persist;
 };
 
 void pstream_init(struct pstream *, const struct pstream_class *, char *name);
