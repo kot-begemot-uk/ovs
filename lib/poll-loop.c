@@ -38,6 +38,14 @@ VLOG_DEFINE_THIS_MODULE(poll_loop);
 COVERAGE_DEFINE(poll_create_node);
 COVERAGE_DEFINE(poll_zero_timeout);
 
+#define MAX_EPOLL_EVENTS 64
+
+#ifdef __linux__
+#define USE_EPOLL
+#include <unistd.h>
+#include <sys/epoll.h>
+#endif
+
 struct poll_node {
     struct hmap_node hmap_node;
     struct pollfd pollfd;       /* Events to pass to time_poll(). */
@@ -45,7 +53,6 @@ struct poll_node {
     const char *where;          /* Where poll_node was created. */
     bool valid;                 /* Marked invalid if we got a HUP/NVAL from poll */
 };
-
 struct poll_loop {
     /* All active poll waiters. */
     struct hmap poll_nodes;
@@ -55,9 +62,51 @@ struct poll_loop {
     long long int timeout_when; /* In msecs as returned by time_msec(). */
     const char *timeout_where;  /* Where 'timeout_when' was set. */
     bool persist;
+#ifdef USE_EPOLL
+    int epoll_fd;
+    struct epoll_event epoll_events[MAX_EPOLL_EVENTS];
+#endif
 };
 
 static struct poll_loop *poll_loop(void);
+
+#ifdef USE_EPOLL
+static inline int poll_to_epoll_events(short events) {
+    int ret = 0;
+    if (events & POLLIN) {
+        ret |= EPOLLIN;
+    }
+    if (events & POLLOUT) {
+        ret |= EPOLLOUT;
+    }
+    /* epoll always listens on ERR, no need to map,
+     * epoll distinguishes between HUP and RDHUP,
+     * they are same in poll, epoll has no NVAL
+     */
+    if (events & (POLLHUP | POLLNVAL)) {
+        ret |= (EPOLLHUP | EPOLLRDHUP);
+    }
+    return ret;
+}
+
+static inline short epoll_to_poll_events(int events) {
+    short ret = 0;
+    if (events & EPOLLIN) {
+        ret |= POLLIN;
+    }
+    if (events & EPOLLOUT) {
+        ret |= POLLOUT;
+    }
+    /* epoll always listens on ERR, no need to map,
+     * epoll distinguishes between HUP and RDHUP,
+     * they are same in poll, epoll has no NVAL
+     */
+    if (events & (EPOLLHUP | EPOLLRDHUP)) {
+        ret |= POLLHUP;
+    }
+    return ret;
+}
+#endif
 
 /* Look up the node with same fd or wevent. */
 static struct poll_node *
@@ -106,6 +155,9 @@ static struct poll_node
 {
     struct poll_loop *loop = poll_loop();
     struct poll_node *node;
+#ifdef USE_EPOLL
+    struct epoll_event event;
+#endif
 
     COVERAGE_INC(poll_create_node);
 
@@ -115,6 +167,13 @@ static struct poll_node
     /* Check for duplicate.  If found, "or" the events. */
     node = find_poll_node(loop, fd, wevent);
     if (node) {
+#ifdef USE_EPOLL
+        if (loop->persist && (node->pollfd.events != events)) {
+            event.events = poll_to_epoll_events(node->pollfd.events | events);
+            event.data.ptr = node;
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_MOD, fd, &event);
+        }
+#endif
         node->pollfd.events |= events;
     } else {
         node = xzalloc(sizeof *node);
@@ -130,6 +189,13 @@ static struct poll_node
         node->wevent = wevent;
         node->where = where;
         node->valid = true;
+#ifdef USE_EPOLL
+        if (loop->persist) {
+            event.events = poll_to_epoll_events(events);
+            event.data.ptr = node;
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, fd, &event);
+        }
+#endif
     }
     return node;
 }
@@ -186,6 +252,11 @@ poll_fd_deregister_at(int fd, const char *where) {
 
     node = find_poll_node(loop, fd, 0);
     if (node) {
+#ifdef USE_EPOLL
+        if (loop->persist) {
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_DEL, node->pollfd.fd, NULL);
+        }
+#endif
         hmap_remove(&loop->poll_nodes, &node->hmap_node);
     }
 }
@@ -344,6 +415,11 @@ free_poll_nodes(struct poll_loop *loop)
 
     HMAP_FOR_EACH_SAFE (node, next, hmap_node, &loop->poll_nodes) {
         hmap_remove(&loop->poll_nodes, &node->hmap_node);
+#ifdef USE_EPOLL
+        if (loop->persist) {
+            epoll_ctl(loop->epoll_fd, EPOLL_CTL_DEL, node->pollfd.fd, NULL);
+        }
+#endif
 #ifdef _WIN32
         if (node->wevent && node->pollfd.fd) {
             WSAEventSelect(node->pollfd.fd, NULL, 0);
@@ -455,6 +531,7 @@ persist_poll_block(struct poll_loop *loop)
 
     /* Populate with all the fds and events. */
     counter = 0;
+#ifndef USE_EPOLL
     HMAP_FOR_EACH (node, hmap_node, &loop->poll_nodes) {
         if (node->pollfd.events && node->valid) {
             pollfds[counter] = node->pollfd;
@@ -478,6 +555,12 @@ persist_poll_block(struct poll_loop *loop)
 
     retval = time_poll(pollfds, hmap_count(&loop->poll_nodes), wevents,
                        loop->timeout_when, &elapsed);
+#else
+    retval = time_epoll_wait(loop->epoll_fd,
+        (struct epoll_event *) &loop->epoll_events, MAX_EPOLL_EVENTS, loop->timeout_when, &elapsed);
+    counter = retval;
+#endif
+
     if (retval < 0) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         VLOG_ERR_RL(&rl, "poll: %s", ovs_strerror(-retval));
@@ -485,7 +568,20 @@ persist_poll_block(struct poll_loop *loop)
         log_wakeup(loop->timeout_where, NULL, elapsed);
     } else {
         for (i = 0; i < counter; i++) {
+#ifdef USE_EPOLL
+            node = loop->epoll_events[i].data.ptr;
+            pollfds[i] = node->pollfd;
+            pollfds[i].revents = epoll_to_poll_events(loop->epoll_events[i].events);
+            if (loop->epoll_events[i].events & EPOLLOUT) {
+                struct epoll_event event;
+
+                event.data.ptr = node;
+                event.events = poll_to_epoll_events(node->pollfd.events) & (~EPOLLOUT);
+                epoll_ctl(loop->epoll_fd, EPOLL_CTL_MOD, node->pollfd.fd, &event);
+            }
+#else
             node = find_poll_node(loop, pollfds[i].fd, 0);
+#endif
             if (!node) {
                 VLOG_FATAL("poll: persistence state corrupted, no hash entry for %d", pollfds[i].fd);
             }
@@ -546,12 +642,19 @@ free_poll_loop(void *loop_)
     free_poll_nodes(loop);
     hmap_destroy(&loop->poll_nodes);
     free(loop);
+#ifdef USE_EPOLL
+    if (loop->persist) {
+        close(loop->epoll_fd);
+    }
+#endif
 }
 
 void poll_enable_persist(void) {
     struct poll_loop *loop = poll_loop();
-
     loop->persist = true;
+#ifdef USE_EPOLL
+    loop->epoll_fd = epoll_create(MAX_EPOLL_EVENTS);
+#endif
 }
 
 static struct poll_loop *
@@ -573,6 +676,9 @@ poll_loop(void)
         hmap_init(&loop->poll_nodes);
         xpthread_setspecific(key, loop);
         loop->persist = false;
+#ifdef USE_EPOLL
+        loop->epoll_fd = -1;
+#endif
     }
     return loop;
 }
