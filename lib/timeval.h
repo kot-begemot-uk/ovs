@@ -20,6 +20,9 @@
 #include <time.h>
 #include "openvswitch/type-props.h"
 #include "util.h"
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
 
 #ifdef  __cplusplus
 extern "C" {
@@ -59,6 +62,10 @@ long long int time_wall_usec(void);
 void time_timespec(struct timespec *);
 void time_wall_timespec(struct timespec *);
 void time_alarm(unsigned int secs);
+#ifdef __linux__
+int time_epoll_wait(int epoll_fd, struct epoll_event *events, int max,
+          long long int timeout_when, int *elapsed);
+#endif
 int time_poll(struct pollfd *, int n_pollfds, HANDLE *handles,
               long long int timeout_when, int *elapsed);
 
