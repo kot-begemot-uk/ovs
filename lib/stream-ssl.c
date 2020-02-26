@@ -707,7 +707,10 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
          * to the read which should return 0 if the HUP is a real one, if not we clear it
          * for all other cases we belive what (e)poll has fed us.
          */
-        if ((!(stream->hint->revents & (POLLHUP|POLLNVAL))) && (sslv->rx_want == SSL_READING)) {
+        if (stream->hint->revents & (POLLHUP|POLLNVAL)) {
+                return -EPIPE;
+        }
+        if (sslv->rx_want == SSL_READING) {
             if (!(stream->hint->revents & POLLIN)) {
                 return -EAGAIN;
             } else {
@@ -755,6 +758,9 @@ ssl_do_tx(struct stream *stream)
     struct ssl_stream *sslv = ssl_stream_cast(stream);
 
      if (stream->persist && stream->hint) {
+        if (stream->hint->revents & (POLLHUP|POLLNVAL)) {
+                return -EPIPE;
+        }
         /* poll-loop is providing us with hints for IO */
         if (sslv->tx_want == SSL_WRITING) {
             if (!(stream->hint->revents & POLLOUT)) {

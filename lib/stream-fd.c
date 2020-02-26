@@ -110,12 +110,17 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+
     if (stream->persist && stream->hint) {
         /* poll-loop is providing us with hints for IO. If we got a HUP/NVAL we skip straight
          * to the read which should return 0 if the HUP is a real one, if not we clear it
          * for all other cases we belive what (e)poll has fed us.
          */
-        if ((!(stream->hint->revents & (POLLHUP|POLLNVAL))) && (!stream->rx_ready)) {
+        if (stream->hint->revents & (POLLHUP|POLLNVAL)) {
+                return -EPIPE;
+        }
+
+        if (!stream->rx_ready) {
             if (!(stream->hint->revents & POLLIN)) {
                 return -EAGAIN;
             } else {
@@ -153,7 +158,11 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    
     if (stream->persist && stream->hint) {
+        if (stream->hint->revents & (POLLHUP|POLLNVAL)) {
+                return -EPIPE;
+        }
         /* poll-loop is providing us with hints for IO */
         if (!stream->tx_ready) {
             if (!(stream->hint->revents & POLLOUT)) {
