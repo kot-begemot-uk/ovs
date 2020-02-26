@@ -176,6 +176,8 @@ windows_open(const char *name, char *suffix, struct stream **streamp,
     s->write_pending = false;
     s->retry_connect = retry;
     s->stream.persist = false;
+    s->stream.txbuf = NULL;
+    s->stream.async = 0;
     *streamp = &s->stream;
     return 0;
 }
@@ -375,6 +377,9 @@ const struct stream_class windows_stream_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     windows_wait,               /* wait */
+    NULL,                       /* enqueue */
+    NULL,                       /* flush */
+    NULL,                       /* clear */
 };
 
 struct pwindows_pstream

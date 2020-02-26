@@ -20,8 +20,7 @@
 #include <sys/types.h>
 #include <poll.h>
 #include "stream.h"
-
-/* Active stream connection. */
+#include "openvswitch/ofpbuf.h"
 
 /* Active stream connection.
  *
@@ -32,8 +31,9 @@ struct stream {
     int error;
     char *name;
     char *peer_id;
-    bool persist, rx_ready, tx_ready;
+    bool persist, rx_ready, tx_ready, async;
     struct pollfd *hint;
+    struct ofpbuf *txbuf;
 };
 
 void stream_init(struct stream *, const struct stream_class *,
@@ -109,7 +109,8 @@ struct stream_class {
      * The send function will not be passed a zero 'n'.
      *
      * The send function must not block.  If no bytes can be immediately
-     * accepted for transmission, it should return -EAGAIN immediately. */
+     * accepted for transmission, it should return -EAGAIN immediately.
+     */
     ssize_t (*send)(struct stream *stream, const void *buffer, size_t n);
 
     /* Allows 'stream' to perform maintenance activities, such as flushing
@@ -127,6 +128,20 @@ struct stream_class {
     /* Arranges for the poll loop to wake up when 'stream' is ready to take an
      * action of the given 'type'. */
     void (*wait)(struct stream *stream, enum stream_wait_type type);
+
+    /* Tries to enqueue up to 'n' bytes of 'buffer' on 'stream', and returns:
+     *
+     * If the stream supports internal buffering/async send it will just
+     * enqueue, until a flush is executed.
+     */
+
+
+    ssize_t (*enqueue)(struct stream *stream, const void *buffer, size_t n);
+
+    int (*flush)(struct stream *stream);
+
+    void (*clear)(struct stream *stream);
+
 };
 
 /* Passive listener for incoming stream connections.

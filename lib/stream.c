@@ -91,7 +91,7 @@ check_stream_classes(void)
             || class->run_wait || class->wait) {
             ovs_assert(class->close != NULL);
             ovs_assert(class->recv != NULL);
-            ovs_assert(class->send != NULL);
+            ovs_assert((class->send != NULL) || (class->enqueue != NULL));
             ovs_assert(class->wait != NULL);
         } else {
             /* This class delegates to another one. */
@@ -372,6 +372,12 @@ stream_recv(struct stream *stream, void *buffer, size_t n)
             : (stream->class->recv)(stream, buffer, n));
 }
 
+static int
+stream_enqueue(struct stream *stream, const void *buffer, size_t n)
+{
+    return stream->class->enqueue(stream, buffer, n);
+}
+
 /* Tries to send up to 'n' bytes of 'buffer' on 'stream', and returns:
  *
  *     - If successful, the number of bytes sent (between 1 and 'n').  0 is
@@ -384,10 +390,34 @@ stream_recv(struct stream *stream, void *buffer, size_t n)
 int
 stream_send(struct stream *stream, const void *buffer, size_t n)
 {
-    int retval = stream_connect(stream);
-    return (retval ? -retval
-            : n == 0 ? 0
-            : (stream->class->send)(stream, buffer, n));
+    int retval = -stream_connect(stream);
+    int error;
+
+    if ((retval == 0) && (n > 0)) {
+        if (stream->async) {
+            retval = stream_enqueue(stream, buffer, n);
+            if (retval > 0) {
+                error = stream_flush(stream);
+                switch (error) {
+                case 0:
+                    stream_clear(stream);
+                    retval = n;
+                    break;
+                case -EAGAIN:
+                    stream_send_wait(stream);
+                    retval = n;
+                    break;
+                default:
+                    stream_clear(stream);
+                    retval = error;
+                }
+            }
+        } else {
+            retval = stream->class->send(stream, buffer, n);
+        }
+    }
+
+    return retval;
 }
 
 /* Allows 'stream' to perform maintenance activities, such as flushing
@@ -395,8 +425,32 @@ stream_send(struct stream *stream, const void *buffer, size_t n)
 void
 stream_run(struct stream *stream)
 {
+    if (stream->async) {
+        if (stream->txbuf && stream_flush(stream) != -EAGAIN) {
+            stream_clear(stream);
+        }
+    }
     if (stream->class->run) {
         (stream->class->run)(stream);
+    }
+}
+
+/* Attempts to flush any stream  output buffers. */
+int
+stream_flush(struct stream *stream)
+{
+    if (stream->class->flush) {
+        return (stream->class->flush)(stream);
+    }
+    return 0;
+}
+
+/* Clears any stream  output buffers. */
+void
+stream_clear(struct stream *stream)
+{
+    if (stream->class->clear) {
+        (stream->class->clear)(stream);
     }
 }
 
@@ -828,3 +882,4 @@ stream_report_content(const void *data, ssize_t size,
                         stream_content_type_to_string(expected_type));
     }
 }
+

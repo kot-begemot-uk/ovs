@@ -47,6 +47,7 @@ static const struct stream_class stream_fd_class;
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 25);
 
 static void maybe_unlink_and_free(char *path);
+static void fd_clear_txbuf(struct stream *s);
 
 /* Creates a new stream named 'name' that will send and receive data on 'fd'
  * and stores a pointer to the stream in '*streamp'.  Initial connection status
@@ -68,6 +69,11 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     s->stream.persist = poll_fd_register(fd, POLLIN, &s->stream.hint);
     s->stream.rx_ready = true;
     s->stream.tx_ready = true;
+    /* we try to be async only if we are running within a persist
+     * poll framework */
+    s->stream.async = s->stream.persist;
+
+    s->stream.txbuf = NULL;
     s->fd = fd;
     s->fd_type = fd_type;
     *streamp = &s->stream;
@@ -87,6 +93,9 @@ fd_close(struct stream *stream)
     struct stream_fd *s = stream_fd_cast(stream);
     if (s->stream.persist) {
         poll_fd_deregister(s->fd);
+    }
+    if (s->stream.txbuf) {
+        stream_clear(stream);
     }
     closesocket(s->fd);
     free(s);
@@ -184,6 +193,42 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     return (retval > 0 ? retval : -EAGAIN);
 }
 
+static int fd_flush(struct stream *stream) {
+    int retval;
+
+    if (!stream->txbuf) {
+        return 0;
+    }
+    do {
+        retval = fd_send(stream, stream->txbuf->data, stream->txbuf->size);
+        if (retval >= 0) {
+            ofpbuf_pull(stream->txbuf, retval);
+            if (stream->txbuf->size == 0) {
+                return 0;
+            }
+        }
+    } while ((retval >= 0) && (stream->txbuf->size > 0));
+    return retval;
+}
+
+
+static ssize_t
+fd_enqueue(struct stream *stream, const void *buffer, size_t n)
+{
+    if (stream->txbuf) {
+        return -EAGAIN;
+    }
+    stream->txbuf = ofpbuf_clone_data(buffer, n);
+    return n;
+}
+
+static void
+fd_clear_txbuf(struct stream *s)
+{
+    ofpbuf_delete(s->txbuf);
+    s->txbuf = NULL;
+}
+
 static void
 fd_wait(struct stream *stream, enum stream_wait_type wait)
 {
@@ -222,6 +267,9 @@ static const struct stream_class stream_fd_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     fd_wait,                    /* wait */
+    fd_enqueue,                 /* enqueue */
+    fd_flush,                   /* flush */
+    fd_clear_txbuf,             /* clear */
 };
 
 /* Passive file descriptor stream. */

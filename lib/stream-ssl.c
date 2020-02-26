@@ -83,7 +83,6 @@ struct ssl_stream
     enum session_type type;
     int fd;
     SSL *ssl;
-    struct ofpbuf *txbuf;
     unsigned int session_nr;
 
     /* rx_want and tx_want record the result of the last call to SSL_read()
@@ -189,7 +188,7 @@ static int ssl_init(void);
 static int do_ssl_init(void);
 static bool ssl_wants_io(int ssl_error);
 static void ssl_close(struct stream *);
-static void ssl_clear_txbuf(struct ssl_stream *);
+static void ssl_clear_txbuf(struct stream *);
 static void interpret_queued_ssl_error(const char *function);
 static int interpret_ssl_error(const char *function, int ret, int error,
                                int *want);
@@ -300,7 +299,7 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->type = type;
     sslv->fd = fd;
     sslv->ssl = ssl;
-    sslv->txbuf = NULL;
+    sslv->stream.txbuf = NULL;
     sslv->rx_want = sslv->tx_want = SSL_NOTHING;
     sslv->session_nr = next_session_nr++;
     sslv->n_head = 0;
@@ -313,6 +312,7 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->stream.persist = poll_fd_register(fd, POLLIN, &sslv->stream.hint);
     sslv->stream.rx_ready = true;
     sslv->stream.tx_ready = true;
+    sslv->stream.async = true; /* SSL is always sort-a async */
 
     *streamp = &sslv->stream;
     free(server_name);
@@ -593,7 +593,7 @@ static void
 ssl_close(struct stream *stream)
 {
     struct ssl_stream *sslv = ssl_stream_cast(stream);
-    ssl_clear_txbuf(sslv);
+    stream_clear(stream);
 
     /* Attempt clean shutdown of the SSL connection.  This will work most of
      * the time, as long as the kernel send buffer has some free space and the
@@ -711,7 +711,7 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
             if (!(stream->hint->revents & POLLIN)) {
                 return -EAGAIN;
             } else {
-                /* POLLIN event from poll loop, mark us as ready 
+                /* POLLIN event from poll loop, mark us as ready
                  * rx_want is cleared further down by reading ssl fsm
                  */
                 stream->hint->revents &= ~POLLIN;
@@ -743,11 +743,12 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
 }
 
 static void
-ssl_clear_txbuf(struct ssl_stream *sslv)
+ssl_clear_txbuf(struct stream *s)
 {
-    ofpbuf_delete(sslv->txbuf);
-    sslv->txbuf = NULL;
+    ofpbuf_delete(s->txbuf);
+    s->txbuf = NULL;
 }
+
 
 static int
 ssl_do_tx(struct stream *stream)
@@ -758,7 +759,7 @@ ssl_do_tx(struct stream *stream)
         /* poll-loop is providing us with hints for IO */
         if (sslv->tx_want == SSL_WRITING) {
             if (!(stream->hint->revents & POLLOUT)) {
-                return EAGAIN;
+                return -EAGAIN;
             } else {
                 /* POLLIN event from poll loop, mark us as ready
                  * rx_want is cleared further down by reading ssl fsm
@@ -768,26 +769,29 @@ ssl_do_tx(struct stream *stream)
         }
     }
 
+    if (!stream->txbuf) {
+        return -EAGAIN;
+    }
 
     for (;;) {
         int old_state = SSL_get_state(sslv->ssl);
-        int ret = SSL_write(sslv->ssl, sslv->txbuf->data, sslv->txbuf->size);
+        int ret = SSL_write(sslv->ssl, stream->txbuf->data, stream->txbuf->size);
         if (old_state != SSL_get_state(sslv->ssl)) {
             sslv->rx_want = SSL_NOTHING;
         }
         sslv->tx_want = SSL_NOTHING;
         if (ret > 0) {
-            ofpbuf_pull(sslv->txbuf, ret);
-            if (sslv->txbuf->size == 0) {
+            ofpbuf_pull(stream->txbuf, ret);
+            if (stream->txbuf->size == 0) {
                 return 0;
             }
         } else {
             int ssl_error = SSL_get_error(sslv->ssl, ret);
             if (ssl_error == SSL_ERROR_ZERO_RETURN) {
                 VLOG_WARN_RL(&rl, "SSL_write: connection closed");
-                return EPIPE;
+                return -EPIPE;
             } else {
-                return interpret_ssl_error("SSL_write", ret, ssl_error,
+                return -interpret_ssl_error("SSL_write", ret, ssl_error,
                                            &sslv->tx_want);
             }
         }
@@ -797,40 +801,13 @@ ssl_do_tx(struct stream *stream)
 static ssize_t
 ssl_send(struct stream *stream, const void *buffer, size_t n)
 {
-    struct ssl_stream *sslv = ssl_stream_cast(stream);
-
-    if (sslv->txbuf) {
+    if (stream->txbuf) {
         return -EAGAIN;
-    } else {
-        int error;
-
-        sslv->txbuf = ofpbuf_clone_data(buffer, n);
-        error = ssl_do_tx(stream);
-        switch (error) {
-        case 0:
-            ssl_clear_txbuf(sslv);
-            return n;
-        case EAGAIN:
-            if (stream->persist) {
-                stream_send_wait(stream);
-            }
-            return n;
-        default:
-            ssl_clear_txbuf(sslv);
-            return -error;
-        }
     }
+    stream->txbuf = ofpbuf_clone_data(buffer, n);
+    return n;
 }
 
-static void
-ssl_run(struct stream *stream)
-{
-    struct ssl_stream *sslv = ssl_stream_cast(stream);
-
-    if (sslv->txbuf && ssl_do_tx(stream) != EAGAIN) {
-        ssl_clear_txbuf(sslv);
-    }
-}
 
 static void
 ssl_run_wait(struct stream *stream)
@@ -896,12 +873,15 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
         break;
 
     case STREAM_SEND:
-        if (!sslv->txbuf) {
+        if (!stream->txbuf) {
             /* We have room in our tx queue. */
             poll_immediate_wake();
         } else {
-            /* stream_run_wait() will do the right thing; don't bother with
-             * redundancy. */
+            if (stream->persist) {
+                private_poll_fd_wait(sslv->fd, want_to_poll_events(sslv->tx_want));
+            } else {
+                poll_fd_wait(sslv->fd, want_to_poll_events(sslv->tx_want));
+            }
         }
         break;
 
@@ -917,10 +897,13 @@ const struct stream_class ssl_stream_class = {
     ssl_close,                  /* close */
     ssl_connect,                /* connect */
     ssl_recv,                   /* recv */
-    ssl_send,                   /* send */
-    ssl_run,                    /* run */
+    NULL,                       /* ssl always uses the buffered/async path */
+    NULL,                    /* run */
     ssl_run_wait,               /* run_wait */
     ssl_wait,                   /* wait */
+    ssl_send,                   /* send == enqueue*/
+    ssl_do_tx,                  /* flush */
+    ssl_clear_txbuf,            /* clear */
 };
 
 /* Passive SSL. */
