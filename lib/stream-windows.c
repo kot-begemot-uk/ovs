@@ -175,6 +175,7 @@ windows_open(const char *name, char *suffix, struct stream **streamp,
     s->read_pending = false;
     s->write_pending = false;
     s->retry_connect = retry;
+    s->stream.persist = false;
     *streamp = &s->stream;
     return 0;
 }
@@ -649,6 +650,7 @@ pwindows_open(const char *name OVS_UNUSED, char *suffix,
     p->connect.hEvent = CreateEvent(NULL, TRUE, TRUE, NULL);
     p->pending = false;
     p->pipe_path = bind_path;
+    p->stream.persist = false;
     *pstreamp = &p->pstream;
     return 0;
 }

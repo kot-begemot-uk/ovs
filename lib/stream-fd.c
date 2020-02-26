@@ -65,6 +65,9 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
 
     s = xmalloc(sizeof *s);
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
+    s->stream.persist = poll_fd_register(fd, POLLIN, &s->stream.hint);
+    s->stream.rx_ready = true;
+    s->stream.tx_ready = true;
     s->fd = fd;
     s->fd_type = fd_type;
     *streamp = &s->stream;
@@ -82,6 +85,9 @@ static void
 fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
+    if (s->stream.persist) {
+        poll_fd_deregister(s->fd);
+    }
     closesocket(s->fd);
     free(s);
 }
@@ -103,6 +109,26 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
     struct stream_fd *s = stream_fd_cast(stream);
     ssize_t retval;
     int error;
+
+    if (stream->persist && stream->hint) {
+        /* poll-loop is providing us with hints for IO. If we got a HUP/NVAL we skip straight
+         * to the read which should return 0 if the HUP is a real one, if not we clear it
+         * for all other cases we belive what (e)poll has fed us.
+         */
+        if ((!(stream->hint->revents & (POLLHUP | POLLNVAL))) && (!stream->rx_ready)) {
+            if (!(stream->hint->revents & POLLIN)) {
+                return -EAGAIN;
+            } else {
+                /* POLLIN event from poll loop, mark us as ready */
+                stream->rx_ready = true;
+                stream->hint->revents &= ~POLLIN;
+            }
+        } else {
+            stream->hint->revents &= ~(POLLHUP | POLLNVAL);
+        }
+    }
+
+
 
     retval = recv(s->fd, buffer, n, 0);
     if (retval < 0) {
@@ -127,6 +153,19 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    if (stream->persist && stream->hint) {
+        /* poll-loop is providing us with hints for IO */
+        if (!stream->tx_ready) {
+            if (!(stream->hint->revents & POLLOUT)) {
+                return -EAGAIN;
+            } else {
+                /* POLLOUT event from poll loop, mark us as ready */
+                stream->tx_ready = true;
+                stream->hint->revents &= ~POLLOUT;
+            }
+        }
+    }
+
     retval = send(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
@@ -137,6 +176,8 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
 #endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "send: %s", sock_strerror(error));
+        } else {
+            stream->tx_ready = false;
         }
         return -error;
     }
@@ -150,11 +191,19 @@ fd_wait(struct stream *stream, enum stream_wait_type wait)
     switch (wait) {
     case STREAM_CONNECT:
     case STREAM_SEND:
-        poll_fd_wait(s->fd, POLLOUT);
+        if (stream->persist) {
+            private_poll_fd_wait(s->fd, POLLOUT);
+        } else {
+            poll_fd_wait(s->fd, POLLOUT);
+        }
         break;
 
     case STREAM_RECV:
-        poll_fd_wait(s->fd, POLLIN);
+        if (stream->persist) {
+            private_poll_fd_wait(s->fd, POLLIN);
+        } else {
+            poll_fd_wait(s->fd, POLLIN);
+        }
         break;
 
     default:
@@ -219,6 +268,7 @@ new_fd_pstream(char *name, int fd,
 {
     struct fd_pstream *ps = xmalloc(sizeof *ps);
     pstream_init(&ps->pstream, &fd_pstream_class, name);
+    ps->pstream.persist = poll_fd_register(fd, POLLIN, NULL);
     ps->fd = fd;
     ps->accept_cb = accept_cb;
     ps->unlink_path = unlink_path;
@@ -230,6 +280,9 @@ static void
 pfd_close(struct pstream *pstream)
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
+    if (pstream->persist) {
+        poll_fd_deregister(ps->fd);
+    }
     closesocket(ps->fd);
     maybe_unlink_and_free(ps->unlink_path);
     free(ps);
@@ -271,7 +324,11 @@ static void
 pfd_wait(struct pstream *pstream)
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
-    poll_fd_wait(ps->fd, POLLIN);
+    if (pstream->persist) {
+        private_poll_fd_wait(ps->fd, POLLIN);
+    } else {
+        poll_fd_wait(ps->fd, POLLIN);
+    }
 }
 
 static const struct pstream_class fd_pstream_class = {
