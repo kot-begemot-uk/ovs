@@ -21,6 +21,7 @@
 #include <poll.h>
 #include "stream.h"
 #include "openvswitch/ofpbuf.h"
+#include "openvswitch/thread.h"
 
 /* Active stream connection.
  *
@@ -29,11 +30,14 @@ struct stream {
     const struct stream_class *class;
     int state;
     int error;
+    int async_error;
     char *name;
     char *peer_id;
     bool persist, rx_ready, tx_ready, async;
     struct pollfd *hint;
     struct ofpbuf *txbuf;
+    struct ovs_list list_node;
+    struct ovs_mutex mutex;
 };
 
 void stream_init(struct stream *, const struct stream_class *,

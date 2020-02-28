@@ -76,6 +76,7 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     s->stream.txbuf = NULL;
     s->fd = fd;
     s->fd_type = fd_type;
+    stream_init_async(&s->stream);
     *streamp = &s->stream;
     return 0;
 }
@@ -125,12 +126,12 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
          * for all other cases we belive what (e)poll has fed us.
          */
         if ((!(stream->hint->revents & (POLLHUP | POLLNVAL))) && (!stream->rx_ready)) {
-            if (!(stream->hint->revents & POLLIN)) {
-                return -EAGAIN;
-            } else {
+            if (stream->hint->revents & POLLIN) {
                 /* POLLIN event from poll loop, mark us as ready */
                 stream->rx_ready = true;
                 stream->hint->revents &= ~POLLIN;
+            } else {
+                return -EAGAIN;
             }
         } else {
             stream->hint->revents &= ~(POLLHUP | POLLNVAL);
@@ -162,7 +163,10 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
-    if (stream->persist && stream->hint) {
+    /* if not async, use flow control, if async
+     * always allow TX, we will try to deal with
+     * this later */
+    if ((!stream->async) && stream->persist && stream->hint) {
         /* poll-loop is providing us with hints for IO */
         if (!stream->tx_ready) {
             if (!(stream->hint->revents & POLLOUT)) {

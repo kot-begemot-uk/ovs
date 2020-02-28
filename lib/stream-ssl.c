@@ -312,7 +312,8 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->stream.persist = poll_fd_register(fd, POLLIN, &sslv->stream.hint);
     sslv->stream.rx_ready = true;
     sslv->stream.tx_ready = true;
-    sslv->stream.async = true; /* SSL is always sort-a async */
+    sslv->stream.async = sslv->stream.persist;
+    stream_init_async(&sslv->stream);
 
     *streamp = &sslv->stream;
     free(server_name);
@@ -702,7 +703,7 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
     /* Behavior of zero-byte SSL_read is poorly defined. */
     ovs_assert(n > 0);
 
-    if (stream->persist && stream->hint) {
+    if ((!stream->async) && stream->persist && stream->hint) {
         /* poll-loop is providing us with hints for IO. If we got a HUP/NVAL we skip straight
          * to the read which should return 0 if the HUP is a real one, if not we clear it
          * for all other cases we belive what (e)poll has fed us.

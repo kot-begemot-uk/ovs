@@ -36,6 +36,9 @@
 #include "ovs-thread.h"
 #include "packets.h"
 #include "openvswitch/poll-loop.h"
+#include "openvswitch/list.h"
+#include "openvswitch/thread.h"
+#include "latch.h"
 #include "random.h"
 #include "socket-util.h"
 #include "util.h"
@@ -75,6 +78,87 @@ static const struct pstream_class *pstream_classes[] = {
     &pssl_pstream_class,
 #endif
 };
+
+static struct ovs_mutex async_io_mutex = OVS_MUTEX_INITIALIZER;
+static struct ovs_list async_streams = OVS_LIST_INITIALIZER(&async_streams);
+
+static bool async_io_started = false;
+static bool async_io_setup = false;
+static bool kill_async_io = false;
+
+/* UGLY. I'd rather use a proper semaphore here */
+static struct latch async_io_latch;
+
+static void async_io_hook(void *aux OVS_UNUSED) {
+    kill_async_io = true;
+    latch_set(&async_io_latch);
+    latch_destroy(&async_io_latch);
+}
+
+static void *async_io_helper(void *arg) {
+    struct stream *s;
+    int error;
+    do {
+        latch_poll(&async_io_latch);
+        if (kill_async_io) {
+            return NULL;
+        }
+        ovs_mutex_lock(&async_io_mutex);
+        LIST_FOR_EACH(s, list_node, &async_streams) {
+            error = stream_flush(s);
+            switch (error) {
+            case 0:
+                break;
+            case -EAGAIN:
+                /* this is in a different thread so it
+                 * will use its own poll loop, which uses
+                 * normal poll and is set only for POLLOUT.
+                 * We should really try to make this work
+                 * only fds which require attention.
+                 */
+                stream_send_wait(s);
+                break;
+            default:
+                stream_clear(s);
+            }
+        }
+        ovs_mutex_unlock(&async_io_mutex);
+        latch_wait(&async_io_latch);
+        poll_block();
+    } while (true);
+    return arg;
+}
+
+void stream_init_async(struct stream *s) {
+    if (s->async) {
+        s->async_error = 0;
+        ovs_mutex_lock(&async_io_mutex);
+        ovs_list_push_back(&async_streams, &s->list_node);
+        if (!async_io_setup) {
+            latch_init(&async_io_latch);
+            fatal_signal_add_hook(async_io_hook, NULL, NULL, true);
+            async_io_setup = true;
+        }
+        if (!async_io_started) {
+            ovs_thread_create("async io helper", async_io_helper, NULL);
+            async_io_started = true;
+        }
+        ovs_mutex_unlock(&async_io_mutex);
+    }
+    ovs_mutex_init(&s->mutex);
+}
+
+void stream_deinit_async(struct stream *s) {
+    if (s->async) {
+        ovs_mutex_lock(&async_io_mutex);
+        ovs_list_remove(&s->list_node);
+        ovs_mutex_unlock(&async_io_mutex);
+        /* ensure a run for the async thread to exit if there
+         * are no streams to serve
+         */
+        latch_set(&async_io_latch);
+    }
+}
 
 /* Check the validity of the stream class structures. */
 static void
@@ -295,6 +379,7 @@ stream_close(struct stream *stream)
     if (stream != NULL) {
         char *name = stream->name;
         char *peer_id = stream->peer_id;
+        stream_deinit_async(stream);
         (stream->class->close)(stream);
         free(name);
         free(peer_id);
@@ -372,10 +457,20 @@ stream_recv(struct stream *stream, void *buffer, size_t n)
             : (stream->class->recv)(stream, buffer, n));
 }
 
-static int
+int
 stream_enqueue(struct stream *stream, const void *buffer, size_t n)
 {
-    return stream->class->enqueue(stream, buffer, n);
+    int retval;
+    ovs_mutex_lock(&stream->mutex);
+    retval = stream->async_error;
+    if ((retval == -EAGAIN) || (retval == 0)) {
+        retval = stream->class->enqueue(stream, buffer, n);
+    }
+    ovs_mutex_unlock(&stream->mutex);
+    if (retval > 0) {
+        latch_set(&async_io_latch);
+    }
+    return retval;
 }
 
 /* Tries to send up to 'n' bytes of 'buffer' on 'stream', and returns:
@@ -396,27 +491,30 @@ stream_send(struct stream *stream, const void *buffer, size_t n)
     if ((retval == 0) && (n > 0)) {
         if (stream->async) {
             retval = stream_enqueue(stream, buffer, n);
-            if (retval > 0) {
-                error = stream_flush(stream);
-                switch (error) {
-                case 0:
-                    stream_clear(stream);
-                    retval = n;
-                    break;
-                case -EAGAIN:
-                    stream_send_wait(stream);
-                    retval = n;
-                    break;
-                default:
-                    stream_clear(stream);
-                    retval = error;
+        } else {
+            if (stream->class->send) {
+                retval = stream->class->send(stream, buffer, n);
+            } else {
+                /* forced sync for a stream which is written for async */
+                retval = stream_enqueue(stream, buffer, n);
+                if (retval > 0) {
+                    error = stream_flush(stream);
+                    switch (error) {
+                    case 0:
+                        retval = n;
+                        break;
+                    case -EAGAIN:
+                        retval = n;
+                        stream_send_wait(stream);
+                        break;
+                    default:
+                        retval = error;
+                        stream_clear(stream);
+                    }
                 }
             }
-        } else {
-            retval = stream->class->send(stream, buffer, n);
         }
     }
-
     return retval;
 }
 
@@ -426,7 +524,7 @@ void
 stream_run(struct stream *stream)
 {
     if (stream->async) {
-        if (stream->txbuf && stream_flush(stream) != -EAGAIN) {
+        if (stream_flush(stream) != -EAGAIN) {
             stream_clear(stream);
         }
     }
@@ -439,19 +537,33 @@ stream_run(struct stream *stream)
 int
 stream_flush(struct stream *stream)
 {
-    if (stream->class->flush) {
-        return (stream->class->flush)(stream);
+    int retval;
+    ovs_mutex_lock(&stream->mutex);
+    retval = stream->async_error;
+    if ((retval == -EAGAIN) && (stream->txbuf)) {
+     /* we are retrying a flush */
+        retval = 0;
     }
-    return 0;
+    if (retval == 0 && stream->txbuf && stream->class->flush) {
+        retval = (stream->class->flush)(stream);
+        if (retval == 0) {
+            (stream->class->clear)(stream);
+        }
+    }
+    stream->async_error = retval;
+    ovs_mutex_unlock(&stream->mutex);
+    return retval;
 }
 
 /* Clears any stream  output buffers. */
 void
 stream_clear(struct stream *stream)
 {
+    ovs_mutex_lock(&stream->mutex);
     if (stream->class->clear) {
         (stream->class->clear)(stream);
     }
+    ovs_mutex_unlock(&stream->mutex);
 }
 
 /* Arranges for the poll loop to wake up when 'stream' needs to perform
@@ -712,6 +824,7 @@ stream_init(struct stream *stream, const struct stream_class *class,
                     : !connect_status ? SCS_CONNECTED
                     : SCS_DISCONNECTED);
     stream->error = connect_status;
+    stream->async_error = 0;
     stream->name = name;
     ovs_assert(stream->state != SCS_CONNECTING || class->connect);
 }
