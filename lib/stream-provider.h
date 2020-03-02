@@ -31,6 +31,7 @@ struct stream {
     int state;
     int error;
     int async_error;
+    int stream_id; /* random ID used for thread pooling in async IO */
     char *name;
     char *peer_id;
     bool persist, rx_ready, tx_ready, async;
