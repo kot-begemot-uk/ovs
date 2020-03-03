@@ -96,9 +96,6 @@ static void *async_io_helper(void *arg) {
 
     do {
         latch_poll(&io_control->async_latch);
-        if (kill_async_io) {
-            return NULL;
-        }
         ovs_mutex_lock(&io_control->async_io_mutex);
         LIST_FOR_EACH(s, list_node, &io_control->work_items) {
             error = stream_flush(s);
@@ -121,7 +118,7 @@ static void *async_io_helper(void *arg) {
         ovs_mutex_unlock(&io_control->async_io_mutex);
         latch_wait(&io_control->async_latch);
         poll_block();
-    } while (true);
+    } while (!kill_async_io);
     return arg;
 }
 

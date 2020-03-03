@@ -77,6 +77,7 @@ static bool do_run(struct jsonrpc *rpc)
     }
 
     stream_run(rpc->stream);
+    ovs_mutex_lock(&rpc->mutex);
     while (!ovs_list_is_empty(&rpc->output)) {
         struct ofpbuf *buf = ofpbuf_from_list(rpc->output.next);
         int retval;
@@ -94,11 +95,14 @@ static bool do_run(struct jsonrpc *rpc)
             if (retval != -EAGAIN) {
                 VLOG_WARN_RL(&rl, "%s: send error: %s",
                              rpc->name, ovs_strerror(-retval));
+                ovs_mutex_unlock(&rpc->mutex);
                 jsonrpc_error(rpc, -retval);
+                return false;
             }
             break;
         }
     }
+    ovs_mutex_unlock(&rpc->mutex);
     return (rpc->output_count > 0);
 }
 
@@ -117,24 +121,19 @@ static void *async_rpc_helper(void *arg) {
 
     do {
         latch_poll(&control->async_latch);
-        if (kill_async_io) {
-            return NULL;
-        }
         ovs_mutex_lock(&control->async_io_mutex);
         LIST_FOR_EACH(j, list_node, &control->work_items) {
-            ovs_mutex_lock(&j->mutex);
             if (j->stream) {
                 if (do_run(j)) {
                     /* wake us up when we can push output */
                     stream_send_wait(j->stream);
                 }
             }
-            ovs_mutex_unlock(&j->mutex);
         }
         latch_wait(&control->async_latch);
         ovs_mutex_unlock(&control->async_io_mutex);
         poll_block();
-    } while (true);
+    } while (!kill_async_io);
     return arg;
 }
 
