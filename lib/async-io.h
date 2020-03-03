@@ -27,6 +27,7 @@ struct async_io_control {
     struct latch async_latch;
     struct ovs_list work_items;
     struct ovs_mutex async_io_mutex;
+    pthread_t worker_id;
 };
 
 struct async_io_pool {

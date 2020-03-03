@@ -67,7 +67,8 @@ static void async_io_hook(void *aux OVS_UNUSED) {
     struct async_io_pool *pool; 
     LIST_FOR_EACH(pool, list_node, &io_pools) {
         for (i = 0; i < pool->size ; i++) {
-            latch_set(&pool->controls[i].async_latch);
+            latch_set((&pool->controls[i].async_latch));
+            pthread_join(pool->controls[i].worker_id, NULL);
             latch_destroy(&pool->controls[i].async_latch);
         }
     }
@@ -116,7 +117,8 @@ struct async_io_pool *add_pool(void *(*start)(void *)){
         ovs_list_init(&io_control->work_items);
     }
     for (i = 0; i < pool_size; i++) {
-        ovs_thread_create("async io helper", start, &pool->controls[i]);
+        pool->controls[i].worker_id = 
+            ovs_thread_create("async io helper", start, &pool->controls[i]);
     }
     ovs_mutex_unlock(&init_mutex);
     return pool;

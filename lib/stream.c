@@ -146,6 +146,7 @@ void stream_init_async(struct stream *s) {
 void stream_deinit_async(struct stream *s) {
     if (s->async) {
         ovs_mutex_lock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
+        stream_flush(s);
         ovs_list_remove(&s->list_node);
         ovs_mutex_unlock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
     }
