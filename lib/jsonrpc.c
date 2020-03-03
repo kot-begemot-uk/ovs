@@ -32,6 +32,9 @@
 #include "stream.h"
 #include "svec.h"
 #include "timeval.h"
+#include "latch.h"
+#include "stream-provider.h"
+#include "async-io.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(jsonrpc);
@@ -50,7 +53,14 @@ struct jsonrpc {
     struct ovs_list output;     /* Contains "struct ofpbuf"s. */
     size_t output_count;        /* Number of elements in "output". */
     size_t backlog;
+    /* we "borrow" the underlying stream async attribute to decide
+     * if we are async or not */
+    int async_id;
+    struct ovs_list list_node;
+    struct ovs_mutex mutex;
 };
+
+static struct async_io_pool *rpc_pool = NULL;
 
 /* Rate limit for error messages. */
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
@@ -59,58 +69,11 @@ static struct jsonrpc_msg *jsonrpc_parse_received_message(struct jsonrpc *);
 static void jsonrpc_cleanup(struct jsonrpc *);
 static void jsonrpc_error(struct jsonrpc *, int error);
 
-/* This is just the same as stream_open() except that it uses the default
- * JSONRPC port if none is specified. */
-int
-jsonrpc_stream_open(const char *name, struct stream **streamp, uint8_t dscp)
+static bool do_run(struct jsonrpc *rpc)
 {
-    return stream_open_with_default_port(name, OVSDB_PORT, streamp, dscp);
-}
 
-/* This is just the same as pstream_open() except that it uses the default
- * JSONRPC port if none is specified. */
-int
-jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
-{
-    return pstream_open_with_default_port(name, OVSDB_PORT, pstreamp, dscp);
-}
-
-/* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
- * new jsonrpc object takes ownership of 'stream'. */
-struct jsonrpc *
-jsonrpc_open(struct stream *stream)
-{
-    struct jsonrpc *rpc;
-
-    ovs_assert(stream != NULL);
-
-    rpc = xzalloc(sizeof *rpc);
-    rpc->name = xstrdup(stream_get_name(stream));
-    rpc->stream = stream;
-    byteq_init(&rpc->input, rpc->input_buffer, sizeof rpc->input_buffer);
-    ovs_list_init(&rpc->output);
-
-    return rpc;
-}
-
-/* Destroys 'rpc', closing the stream on which it is based, and frees its
- * memory. */
-void
-jsonrpc_close(struct jsonrpc *rpc)
-{
-    if (rpc) {
-        jsonrpc_cleanup(rpc);
-        free(rpc->name);
-        free(rpc);
-    }
-}
-
-/* Performs periodic maintenance on 'rpc', such as flushing output buffers. */
-void
-jsonrpc_run(struct jsonrpc *rpc)
-{
     if (rpc->status) {
-        return;
+        return false;
     }
 
     stream_run(rpc->stream);
@@ -136,6 +99,104 @@ jsonrpc_run(struct jsonrpc *rpc)
             break;
         }
     }
+    return (rpc->output_count > 0);
+}
+
+void jsonrpc_run(struct jsonrpc *rpc) {
+    if (rpc->stream && rpc->stream->async) {
+        ovs_assert(rpc_pool != NULL);
+        latch_set(&rpc_pool->controls[rpc->async_id % rpc_pool->size].async_latch);
+    } else {
+        do_run(rpc);
+    }
+}
+
+static void *async_rpc_helper(void *arg) {
+    struct async_io_control *control = (struct async_io_control*) arg;
+    struct jsonrpc *j;
+
+    do {
+        latch_poll(&control->async_latch);
+        if (kill_async_io) {
+            return NULL;
+        }
+        ovs_mutex_lock(&control->async_io_mutex);
+        LIST_FOR_EACH(j, list_node, &control->work_items) {
+            ovs_mutex_lock(&j->mutex);
+            if (j->stream) {
+                if (do_run(j)) {
+                    /* wake us up when we can push output */
+                    stream_send_wait(j->stream);
+                }
+            }
+            ovs_mutex_unlock(&j->mutex);
+        }
+        latch_wait(&control->async_latch);
+        ovs_mutex_unlock(&control->async_io_mutex);
+        poll_block();
+    } while (true);
+    return arg;
+}
+
+
+/* This is just the same as stream_open() except that it uses the default
+ * JSONRPC port if none is specified. */
+int
+jsonrpc_stream_open(const char *name, struct stream **streamp, uint8_t dscp)
+{
+    return stream_open_with_default_port(name, OVSDB_PORT, streamp, dscp);
+}
+
+/* This is just the same as pstream_open() except that it uses the default
+ * JSONRPC port if none is specified. */
+int
+jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
+{
+    return pstream_open_with_default_port(name, OVSDB_PORT, pstreamp, dscp);
+}
+
+/* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
+ * new jsonrpc object takes ownership of 'stream'. */
+struct jsonrpc *
+jsonrpc_open(struct stream *stream)
+{
+    struct jsonrpc *rpc;
+    struct async_io_control *io_control;
+
+    ovs_assert(stream != NULL);
+
+
+    rpc = xzalloc(sizeof *rpc);
+    rpc->name = xstrdup(stream_get_name(stream));
+    rpc->stream = stream;
+    byteq_init(&rpc->input, rpc->input_buffer, sizeof rpc->input_buffer);
+    ovs_list_init(&rpc->output);
+    ovs_mutex_init(&rpc->mutex);
+
+    if (stream->async) {
+        if (!rpc_pool) {
+            rpc_pool = add_pool(async_rpc_helper);
+        }
+        rpc->async_id = async_io_id();
+        io_control = &rpc_pool->controls[rpc->async_id % rpc_pool->size];
+        ovs_mutex_lock(&io_control->async_io_mutex);
+        ovs_list_push_back(&io_control->work_items, &rpc->list_node);
+        ovs_mutex_unlock(&io_control->async_io_mutex);
+    }
+
+    return rpc;
+}
+
+/* Destroys 'rpc', closing the stream on which it is based, and frees its
+ * memory. */
+void
+jsonrpc_close(struct jsonrpc *rpc)
+{
+    if (rpc) {
+        jsonrpc_cleanup(rpc);
+        free(rpc->name);
+        free(rpc);
+    }
 }
 
 /* Arranges for the poll loop to wake up when 'rpc' needs to perform
@@ -145,7 +206,10 @@ jsonrpc_wait(struct jsonrpc *rpc)
 {
     if (!rpc->status) {
         stream_run_wait(rpc->stream);
-        if (!ovs_list_is_empty(&rpc->output)) {
+        if ((!rpc->stream->async) && (!ovs_list_is_empty(&rpc->output))) {
+            /* we need to wait on out only in sync mode, in async mode
+             * the send thread will wait instead
+             */
             stream_send_wait(rpc->stream);
         }
     }
@@ -175,7 +239,11 @@ jsonrpc_get_status(const struct jsonrpc *rpc)
 size_t
 jsonrpc_get_backlog(const struct jsonrpc *rpc)
 {
-    return rpc->status ? 0 : rpc->backlog;
+    size_t retval;
+    ovs_mutex_lock(&rpc->mutex);
+    retval = rpc->status ? 0 : rpc->backlog;
+    ovs_mutex_unlock(&rpc->mutex);
+    return retval;
 }
 
 /* Returns the number of bytes that have been received on 'rpc''s underlying
@@ -241,6 +309,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
     struct json *json;
     struct ds ds = DS_EMPTY_INITIALIZER;
     size_t length;
+    int backlog;
 
     if (rpc->status) {
         jsonrpc_msg_destroy(msg);
@@ -256,6 +325,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     buf = xmalloc(sizeof *buf);
     ofpbuf_use_ds(buf, &ds);
+    ovs_mutex_lock(&rpc->mutex);
     ovs_list_push_back(&rpc->output, &buf->list_node);
     rpc->output_count++;
     rpc->backlog += length;
@@ -265,8 +335,10 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
                      " msgs: %"PRIuSIZE", backlog: %"PRIuSIZE".", rpc->name,
                      rpc->output_count, rpc->backlog);
     }
+    backlog = rpc->backlog;
+    ovs_mutex_unlock(&rpc->mutex);
 
-    if (rpc->backlog == length) {
+    if (backlog == length) {
         jsonrpc_run(rpc);
     }
     return rpc->status;
@@ -495,6 +567,12 @@ jsonrpc_error(struct jsonrpc *rpc, int error)
 static void
 jsonrpc_cleanup(struct jsonrpc *rpc)
 {
+    if (rpc->stream && rpc->stream->async) {
+        ovs_mutex_lock(&rpc_pool->controls[rpc->async_id % rpc_pool->size].async_io_mutex);
+        ovs_list_remove(&rpc->list_node);
+        ovs_mutex_unlock(&rpc_pool->controls[rpc->async_id % rpc_pool->size].async_io_mutex);
+    }
+
     stream_close(rpc->stream);
     rpc->stream = NULL;
 

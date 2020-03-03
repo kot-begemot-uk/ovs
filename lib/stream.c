@@ -148,10 +148,6 @@ void stream_deinit_async(struct stream *s) {
         ovs_mutex_lock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
         ovs_list_remove(&s->list_node);
         ovs_mutex_unlock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
-        /* ensure a run for the async thread to exit if there
-         * are no streams to serve
-         */
-        punt_stream(s);
     }
 }
 
