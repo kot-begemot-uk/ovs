@@ -43,7 +43,7 @@
 #include "random.h"
 #include "socket-util.h"
 #include "util.h"
-#include "ovs-numa.h"
+#include "async-io.h"
 
 VLOG_DEFINE_THIS_MODULE(stream);
 
@@ -81,36 +81,11 @@ static const struct pstream_class *pstream_classes[] = {
 #endif
 };
 
-static bool async_io_started = false;
-static bool async_io_setup = false;
-static bool kill_async_io = false;
-
-static unsigned int seedp;
-
-static struct ovs_mutex init_mutex = OVS_MUTEX_INITIALIZER;
-
-struct async_io_control {
-    struct latch io_latch;
-    struct ovs_list async_streams;
-    struct ovs_mutex async_io_mutex;
-};
-
-static struct async_io_control *io_controls;
-
-static int pool_size;
+static struct async_io_pool *stream_pool = NULL;
 
 static void punt_stream(struct stream *s) {
     if (s->async) {
-        latch_set(&io_controls[s->stream_id % pool_size].io_latch);
-    }
-}
-
-static void async_io_hook(void *aux OVS_UNUSED) {
-    int i;
-    kill_async_io = true;
-    for (i = 0; i < pool_size ; i++) {
-        latch_set(&io_controls[i].io_latch);
-        latch_destroy(&io_controls[i].io_latch);
+        latch_set(&stream_pool->controls[s->stream_id % stream_pool->size].async_latch);
     }
 }
 
@@ -119,14 +94,13 @@ static void *async_io_helper(void *arg) {
     struct stream *s;
     int error;
 
-
     do {
-        latch_poll(&io_control->io_latch);
+        latch_poll(&io_control->async_latch);
         if (kill_async_io) {
             return NULL;
         }
         ovs_mutex_lock(&io_control->async_io_mutex);
-        LIST_FOR_EACH(s, list_node, &io_control->async_streams) {
+        LIST_FOR_EACH(s, list_node, &io_control->work_items) {
             error = stream_flush(s);
             switch (error) {
             case 0:
@@ -145,58 +119,25 @@ static void *async_io_helper(void *arg) {
             }
         }
         ovs_mutex_unlock(&io_control->async_io_mutex);
-        latch_wait(&io_control->io_latch);
+        latch_wait(&io_control->async_latch);
         poll_block();
     } while (true);
     return arg;
-}
-
-static void setup_async_io(void) {
-    int cores, nodes, i;
-    struct async_io_control *io_control;
-
-    ovs_mutex_lock(&init_mutex);
-    seedp = getpid();
-    nodes = ovs_numa_get_n_numas();
-    if (nodes == OVS_NUMA_UNSPEC || nodes <= 0) {
-        nodes = 1;
-    }
-    cores = ovs_numa_get_n_cores();
-    if (cores == OVS_CORE_UNSPEC || cores <= 0) {
-        pool_size = 4;
-    } else {
-        pool_size = cores/nodes;
-    }
-    io_controls = xmalloc(sizeof(struct async_io_control) * pool_size);
-    for (i = 0; i < pool_size; i++) {
-        io_control = &io_controls[i];
-        latch_init(&io_control->io_latch);
-        ovs_mutex_init(&io_control->async_io_mutex);
-        ovs_list_init(&io_control->async_streams);
-    }
-    fatal_signal_add_hook(async_io_hook, NULL, NULL, true);
-    async_io_setup = true;
-    for (i = 0; i < pool_size; i++) {
-        ovs_thread_create("async io helper", async_io_helper, &io_controls[i]);
-    }
-    async_io_started = true;
-    ovs_mutex_unlock(&init_mutex);
 }
 
 void stream_init_async(struct stream *s) {
     struct async_io_control *io_control;
     if (s->async) {
         s->async_error = 0;
-        if (!async_io_setup) {
-            setup_async_io();
+        if (!stream_pool) {
+            stream_pool = add_pool(async_io_helper);
         }
-        s->stream_id = rand_r(&seedp);
+        s->stream_id = async_io_id();
 
-
-        io_control = &io_controls[s->stream_id % pool_size];
+        io_control = &stream_pool->controls[s->stream_id % stream_pool->size];
 
         ovs_mutex_lock(&io_control->async_io_mutex);
-        ovs_list_push_back(&io_control->async_streams, &s->list_node);
+        ovs_list_push_back(&io_control->work_items, &s->list_node);
         ovs_mutex_unlock(&io_control->async_io_mutex);
     }
     ovs_mutex_init(&s->mutex);
@@ -204,9 +145,9 @@ void stream_init_async(struct stream *s) {
 
 void stream_deinit_async(struct stream *s) {
     if (s->async) {
-        ovs_mutex_lock(&io_controls[s->stream_id % pool_size].async_io_mutex);
+        ovs_mutex_lock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
         ovs_list_remove(&s->list_node);
-        ovs_mutex_unlock(&io_controls[s->stream_id % pool_size].async_io_mutex);
+        ovs_mutex_unlock(&stream_pool->controls[s->stream_id % stream_pool->size].async_io_mutex);
         /* ensure a run for the async thread to exit if there
          * are no streams to serve
          */
