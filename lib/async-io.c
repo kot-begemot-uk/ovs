@@ -68,8 +68,10 @@ static void async_io_hook(void *aux OVS_UNUSED) {
     LIST_FOR_EACH(pool, list_node, &io_pools) {
         for (i = 0; i < pool->size ; i++) {
             latch_set((&pool->controls[i].async_latch));
-            pthread_join(pool->controls[i].worker_id, NULL);
             latch_destroy(&pool->controls[i].async_latch);
+        }
+        for (i = 0; i < pool->size ; i++) {
+            pthread_cancel(pool->controls[i].worker_id);
         }
     }
 }

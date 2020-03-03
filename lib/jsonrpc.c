@@ -58,6 +58,7 @@ struct jsonrpc {
     int async_id;
     struct ovs_list list_node;
     struct ovs_mutex mutex;
+    int async_error;
 };
 
 static struct async_io_pool *rpc_pool = NULL;
@@ -72,7 +73,7 @@ static void jsonrpc_error(struct jsonrpc *, int error);
 static bool do_run(struct jsonrpc *rpc)
 {
 
-    if (rpc->status) {
+    if (rpc->status || rpc->async_error) {
         return false;
     }
 
@@ -95,9 +96,7 @@ static bool do_run(struct jsonrpc *rpc)
             if (retval != -EAGAIN) {
                 VLOG_WARN_RL(&rl, "%s: send error: %s",
                              rpc->name, ovs_strerror(-retval));
-                ovs_mutex_unlock(&rpc->mutex);
-                jsonrpc_error(rpc, -retval);
-                return false;
+                rpc->async_error = -retval;
             }
             break;
         }
@@ -107,11 +106,18 @@ static bool do_run(struct jsonrpc *rpc)
 }
 
 void jsonrpc_run(struct jsonrpc *rpc) {
-    if (rpc->stream && rpc->stream->async) {
-        ovs_assert(rpc_pool != NULL);
-        latch_set(&rpc_pool->controls[rpc->async_id % rpc_pool->size].async_latch);
+    if (rpc->async_error) {
+        jsonrpc_error(rpc, rpc->async_error);
     } else {
-        do_run(rpc);
+        if (rpc->stream && rpc->stream->async) {
+            ovs_assert(rpc_pool != NULL);
+            latch_set(&rpc_pool->controls[rpc->async_id % rpc_pool->size].async_latch);
+        } else {
+            do_run(rpc);
+            if (rpc->async_error) {
+                jsonrpc_error(rpc, rpc->async_error);
+            }
+        }
     }
 }
 
@@ -120,19 +126,21 @@ static void *async_rpc_helper(void *arg) {
     struct jsonrpc *j;
 
     do {
-        latch_poll(&control->async_latch);
         ovs_mutex_lock(&control->async_io_mutex);
         LIST_FOR_EACH(j, list_node, &control->work_items) {
-            if (j->stream) {
+            if (j->stream && (!j->async_error)) {
                 if (do_run(j)) {
                     /* wake us up when we can push output */
                     stream_send_wait(j->stream);
                 }
+            } else {
+                VLOG(VLL_DBG, "Dead RPC %p in list", j);
             }
         }
         latch_wait(&control->async_latch);
         ovs_mutex_unlock(&control->async_io_mutex);
         poll_block();
+        latch_poll(&control->async_latch);
     } while (!kill_async_io);
     return arg;
 }
@@ -171,6 +179,7 @@ jsonrpc_open(struct stream *stream)
     byteq_init(&rpc->input, rpc->input_buffer, sizeof rpc->input_buffer);
     ovs_list_init(&rpc->output);
     ovs_mutex_init(&rpc->mutex);
+    rpc->async_error = 0;
 
     if (stream->async) {
         if (!rpc_pool) {
