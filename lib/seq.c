@@ -30,6 +30,8 @@
 
 COVERAGE_DEFINE(seq_change);
 
+#define SEQ_MAGIC 0xBAAD1005
+
 /* A sequence number object. */
 struct seq {
     uint64_t value OVS_GUARDED;
@@ -50,6 +52,7 @@ struct seq_waiter {
 
 /* A thread that might be waiting on one or more seqs. */
 struct seq_thread {
+    unsigned int magic;
     struct ovs_list waiters OVS_GUARDED; /* Contains 'struct seq_waiter's. */
     struct latch latch OVS_GUARDED;  /* Wakeup latch for this thread. */
     bool waiting OVS_GUARDED;        /* True if latch_wait() already called. */
@@ -271,12 +274,14 @@ seq_thread_get(void)
     struct seq_thread *thread = pthread_getspecific(seq_thread_key);
     if (!thread) {
         thread = xmalloc(sizeof *thread);
+        thread->magic = SEQ_MAGIC;
         ovs_list_init(&thread->waiters);
         latch_init(&thread->latch);
         thread->waiting = false;
 
         xpthread_setspecific(seq_thread_key, thread);
     }
+    ovs_assert(thread->magic == SEQ_MAGIC);
     return thread;
 }
 

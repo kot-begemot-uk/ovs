@@ -46,6 +46,8 @@ COVERAGE_DEFINE(poll_zero_timeout);
 #include <sys/epoll.h>
 #endif
 
+#define POLL_LOOP_MAGIC 0x5133534d
+
 struct poll_node {
     struct hmap_node hmap_node;
     struct pollfd pollfd;       /* Events to pass to time_poll(). */
@@ -55,6 +57,7 @@ struct poll_node {
 };
 struct poll_loop {
     /* All active poll waiters. */
+    unsigned int magic;
     struct hmap poll_nodes;
 
     /* Time at which to wake up the next call to poll_block(), LLONG_MIN to
@@ -162,6 +165,11 @@ static struct poll_node
     COVERAGE_INC(poll_create_node);
 
     /* Both 'fd' and 'wevent' cannot be set. */
+
+    if (!(!fd != !wevent)) {
+        VLOG_FATAL("Impossible fd/wevent %d/%d combination called from %s", fd, wevent, where);
+    }
+
     ovs_assert(!fd != !wevent);
 
     /* Check for duplicate.  If found, "or" the events. */
@@ -672,6 +680,7 @@ poll_loop(void)
     loop = pthread_getspecific(key);
     if (!loop) {
         loop = xzalloc(sizeof *loop);
+        loop->magic = POLL_LOOP_MAGIC;
         loop->timeout_when = LLONG_MAX;
         hmap_init(&loop->poll_nodes);
         xpthread_setspecific(key, loop);
@@ -680,6 +689,7 @@ poll_loop(void)
         loop->epoll_fd = -1;
 #endif
     }
+    ovs_assert(loop->magic == POLL_LOOP_MAGIC);
     return loop;
 }
 
