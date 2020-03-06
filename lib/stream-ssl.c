@@ -85,6 +85,7 @@ struct ssl_stream
     SSL *ssl;
     struct ofpbuf *txbuf;
     unsigned int session_nr;
+    int last_sent;
 
     /* rx_want and tx_want record the result of the last call to SSL_read()
      * and SSL_write(), respectively:
@@ -304,6 +305,7 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->rx_want = sslv->tx_want = SSL_NOTHING;
     sslv->session_nr = next_session_nr++;
     sslv->n_head = 0;
+    sslv->last_sent = 0;
 
     if (VLOG_IS_DBG_ENABLED()) {
         SSL_set_msg_callback(ssl, ssl_protocol_cb);
@@ -789,6 +791,48 @@ ssl_run(struct stream *stream)
     }
 }
 
+static int
+ssl_enqueue(struct stream *stream, struct ofpbuf *buf)
+{
+    int n = buf->size;
+    struct ssl_stream *sslv = ssl_stream_cast(stream);
+    if (sslv->txbuf) {
+        return -EAGAIN;
+    }
+    sslv->txbuf = buf;
+    sslv->last_sent = n;
+    return n;
+}
+
+static bool
+ssl_flush(struct stream *stream, int *retval)
+{
+    struct ssl_stream *sslv = ssl_stream_cast(stream);
+
+    if (!sslv->txbuf) {
+        * retval = -EAGAIN;
+        return true;
+    } else {
+        int error;
+
+        error = ssl_do_tx(stream);
+        switch (error) {
+        case 0:
+            ssl_clear_txbuf(sslv);
+            * retval = sslv->last_sent;
+            sslv->last_sent = 0;
+            return true;
+        case EAGAIN:
+            * retval = 0;
+            return false;
+        default:
+            ssl_clear_txbuf(sslv);
+            * retval = -error;
+            return false;
+        }
+    }
+}
+
 static void
 ssl_run_wait(struct stream *stream)
 {
@@ -861,6 +905,8 @@ const struct stream_class ssl_stream_class = {
     ssl_run,                    /* run */
     ssl_run_wait,               /* run_wait */
     ssl_wait,                   /* wait */
+    ssl_enqueue,                /* send_buf */
+    ssl_flush,
 };
 
 /* Passive SSL. */

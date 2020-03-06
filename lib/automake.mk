@@ -24,6 +24,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/aes128.c \
 	lib/aes128.h \
 	lib/async-append.h \
+	lib/async-io.h \
+	lib/async-io.c \
 	lib/backtrace.c \
 	lib/backtrace.h \
 	lib/bfd.c \
