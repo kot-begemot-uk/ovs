@@ -73,6 +73,7 @@ const struct stream_class tcp_stream_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     NULL,                       /* wait */
+    NULL,                       /* send_buf */
 };
 
 /* Passive TCP. */

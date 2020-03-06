@@ -222,6 +222,7 @@ static const struct stream_class stream_fd_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     fd_wait,                    /* wait */
+    NULL,                       /* sendbuf */
 };
 
 /* Passive file descriptor stream. */

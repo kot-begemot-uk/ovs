@@ -19,9 +19,12 @@
 
 #include <sys/types.h>
 #include <poll.h>
+#include "openvswitch/list.h"
+#include "openvswitch/ofpbuf.h"
+#include "openvswitch/thread.h"
 #include "stream.h"
-
-/* Active stream connection. */
+#include "byteq.h"
+#include "latch.h"
 
 /* Active stream connection.
  *
@@ -127,6 +130,18 @@ struct stream_class {
     /* Arranges for the poll loop to wake up when 'stream' is ready to take an
      * action of the given 'type'. */
     void (*wait)(struct stream *stream, enum stream_wait_type type);
+    /* Tries to send a ofbuf and takes ownership of it
+     *
+     *     - If successful - 0
+     *
+     *     - On error, a negative errno value.
+     *
+     *     - Never returns 0.
+     *
+     * The send function must not block.  If no bytes can be immediately
+     * accepted for transmission, it should return -EAGAIN immediately. */
+    bool (*sendbuf)(struct stream *stream, struct ofpbuf *buf, ssize_t *result);
+
 };
 
 /* Passive listener for incoming stream connections.
@@ -188,6 +203,7 @@ struct pstream_class {
     /* Arranges for the poll loop to wake up when a connection is ready to be
      * accepted on 'pstream'. */
     void (*wait)(struct pstream *pstream);
+
 };
 
 /* Active and passive stream classes. */

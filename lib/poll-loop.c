@@ -166,9 +166,9 @@ static struct poll_node
 
     /* Both 'fd' and 'wevent' cannot be set. */
 
-    if (!(!fd != !wevent)) {
-        VLOG_FATAL("Impossible fd/wevent %d/%d combination called from %s", fd, wevent, where);
-    }
+    //if (!(!fd != !wevent)) {
+    //    VLOG_FATAL("Impossible fd/wevent %d/%d combination called from %s", fd, wevent, where);
+    //}
 
     ovs_assert(!fd != !wevent);
 

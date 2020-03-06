@@ -832,6 +832,39 @@ ssl_run(struct stream *stream)
     }
 }
 
+static bool
+ssl_send_buf(struct stream *stream, struct ofpbuf *buf, ssize_t *result)
+{
+    int error;
+    int n = buf->size;
+    struct ssl_stream *sslv = ssl_stream_cast(stream);
+    if (sslv->txbuf) {
+        *result = -EAGAIN;
+        return false;
+    }
+
+    sslv->txbuf = buf;
+
+    error = ssl_do_tx(stream);
+    switch (error) {
+    case 0:
+        ssl_clear_txbuf(sslv);
+        *result = n;
+        break;
+    case EAGAIN:
+        if (stream->persist) {
+            stream_send_wait(stream);
+        }
+        *result = n;
+        break;
+    default:
+        ssl_clear_txbuf(sslv);
+        *result = -error;
+    }
+    return true;
+}
+
+
 static void
 ssl_run_wait(struct stream *stream)
 {
@@ -921,6 +954,7 @@ const struct stream_class ssl_stream_class = {
     ssl_run,                    /* run */
     ssl_run_wait,               /* run_wait */
     ssl_wait,                   /* wait */
+    ssl_send_buf,               /* send_buf */
 };
 
 /* Passive SSL. */
