@@ -15,7 +15,7 @@ ovsdb_check_cluster () {
 
     on_exit 'kill `cat *.pid`'
     for i in `seq $n`; do
-        AT_CHECK([ovsdb-server -vpoll_loop -vraft -vconsole:off -vsyslog:off --detach --no-chdir --log-file=s$i.log --pidfile=s$i.pid --unixctl=s$i --remote=punix:s$i.ovsdb s$i.db])
+        AT_CHECK([ovsdb-server -vraft -vconsole:off -vsyslog:off --detach --no-chdir --log-file=s$i.log --pidfile=s$i.pid --unixctl=s$i --remote=punix:s$i.ovsdb s$i.db])
     done
     for i in `seq $n`; do
         AT_CHECK([ovsdb_client_wait unix:s$i.ovsdb $schema connected])

@@ -48,6 +48,7 @@
 #include "openvswitch/shash.h"
 #include "stream-ssl.h"
 #include "stream.h"
+#include "async-io.h"
 #include "sset.h"
 #include "storage.h"
 #include "table.h"
@@ -182,7 +183,7 @@ main_loop(struct server_config *config,
     *exiting = false;
     ssl_error = NULL;
     remotes_error = NULL;
-    poll_enable_persist();
+    async_io_enable();
     while (!*exiting) {
         memory_run();
         if (memory_should_report()) {

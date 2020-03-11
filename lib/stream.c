@@ -424,7 +424,6 @@ stream_wait(struct stream *stream, enum stream_wait_type wait)
         break;
 
     case SCS_DISCONNECTED:
-        poll_immediate_wake();
         return;
     }
     (stream->class->wait)(stream, wait);

@@ -829,6 +829,8 @@ ssl_run(struct stream *stream)
 
     if (sslv->txbuf && ssl_do_tx(stream) != EAGAIN) {
         ssl_clear_txbuf(sslv);
+    } else {
+        stream_send_wait(stream);
     }
 }
 
