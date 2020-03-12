@@ -745,7 +745,9 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
 static void
 ssl_clear_txbuf(struct ssl_stream *sslv)
 {
-    ofpbuf_delete(sslv->txbuf);
+    if (sslv->txbuf) {
+        ofpbuf_delete(sslv->txbuf);
+    }
     sslv->txbuf = NULL;
 }
 
@@ -837,17 +839,24 @@ ssl_run(struct stream *stream)
 static bool
 ssl_send_buf(struct stream *stream, struct ofpbuf *buf, ssize_t *result)
 {
-    int error;
-    int n = buf->size;
+    int error = EAGAIN;
+    int n = 0;
     struct ssl_stream *sslv = ssl_stream_cast(stream);
-    if (sslv->txbuf) {
+    bool retval = true;
+
+    if (sslv->txbuf && (buf != NULL)) {
         *result = -EAGAIN;
         return false;
     }
 
-    sslv->txbuf = buf;
+    if (buf != NULL) {
+        sslv->txbuf = buf;
+        n = buf->size;
+    } 
 
-    error = ssl_do_tx(stream);
+    if (sslv->txbuf) {
+        error = ssl_do_tx(stream);
+    }
     switch (error) {
     case 0:
         ssl_clear_txbuf(sslv);
@@ -858,12 +867,15 @@ ssl_send_buf(struct stream *stream, struct ofpbuf *buf, ssize_t *result)
             stream_send_wait(stream);
         }
         *result = n;
+        retval = false;
         break;
     default:
+
         ssl_clear_txbuf(sslv);
         *result = -error;
+        retval = false;
     }
-    return true;
+    return retval;
 }
 
 

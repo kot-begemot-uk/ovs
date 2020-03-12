@@ -25,6 +25,14 @@
 #include "socket-util.h"
 #include "util.h"
 
+/* State of an active stream.*/
+enum stream_state {
+    SCS_CONNECTING,             /* Underlying stream is not connected. */
+    SCS_CONNECTED,              /* Connection established. */
+    SCS_DISCONNECTED            /* Connection failed or connection closed. */
+};
+
+
 struct pstream;
 struct stream;
 struct vlog_module;

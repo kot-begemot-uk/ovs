@@ -29,7 +29,7 @@
 #include "socket-util.h"
 #include "util.h"
 
-#define ASYNC_BUFFER_SIZE (512)
+#define ASYNC_BUFFER_SIZE (8192)
 
 struct stream;
 
@@ -45,6 +45,7 @@ struct async_data {
     struct latch rx_notify, tx_notify, run_notify;
     bool async_mode;
     bool flush_required;
+    long long int last_activity;
     struct byteq input;
     uint8_t input_buffer[ASYNC_BUFFER_SIZE];
 };
@@ -71,6 +72,7 @@ int async_stream_enqueue(struct async_data *, struct ofpbuf *buf);
 int async_stream_flush(struct async_data *);
 ssize_t async_stream_recv(struct async_data *);
 void async_stream_run(struct async_data *);
+long long int async_last_activity(struct async_data *);
 
 void async_stream_enable(struct async_data *);
 void async_stream_disable(struct async_data *);
@@ -78,6 +80,7 @@ void async_stream_disable(struct async_data *);
 void async_init_data(struct async_data *, struct stream *);
 void async_recv_wait(struct async_data *);
 void async_cleanup_data(struct async_data *);
+void async_invoke_notify(struct async_data *);
 
 void async_io_enable(void);
 

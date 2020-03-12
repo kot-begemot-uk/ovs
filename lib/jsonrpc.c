@@ -265,6 +265,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 {
     int retval;
     size_t n, used;
+    bool kick = false;
 
     *msgp = NULL;
     if (rpc->status) {
@@ -292,6 +293,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         rpc->parser = json_parser_create(0);
     }
     ovs_mutex_lock(&rpc->data.mutex);
+    kick = byteq_is_full(&rpc->data.input);
     n = byteq_tailroom(&rpc->data.input);
     if (n > 0) {
         used = json_parser_feed(rpc->parser,
@@ -299,6 +301,10 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         byteq_advance_tail(&rpc->data.input, used);
     } 
     ovs_mutex_unlock(&rpc->data.mutex);
+
+    if (kick) {
+        async_invoke_notify(&rpc->data);
+    }
 
     /* If we have complete JSON, attempt to parse it as JSON-RPC. */
     if (json_parser_is_done(rpc->parser)) {
@@ -942,22 +948,10 @@ jsonrpc_session_run(struct jsonrpc_session *s)
     }
 
     if (s->rpc) {
-        size_t backlog;
         int error;
 
-        backlog = jsonrpc_get_backlog(s->rpc);
         jsonrpc_run(s->rpc);
-        if (jsonrpc_get_backlog(s->rpc) < backlog) {
-            /* Data previously caught in a queue was successfully sent (or
-             * there's an error, which we'll catch below.)
-             *
-             * We don't count data that is successfully sent immediately as
-             * activity, because there's a lot of queuing downstream from us,
-             * which means that we can push a lot of data into a connection
-             * that has stalled and won't ever recover.
-             */
-            reconnect_activity(s->reconnect, time_msec());
-        }
+        reconnect_activity(s->reconnect, async_last_activity(&s->rpc->data));
 
         error = jsonrpc_get_status(s->rpc);
         if (error) {
