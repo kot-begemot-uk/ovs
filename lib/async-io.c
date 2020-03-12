@@ -72,9 +72,7 @@ static void stream_run_or_flush(struct async_data *data)
 {
     ssize_t dummy;
     if (data->stream->class->sendbuf) {
-         if ((data->stream->class->sendbuf)(data->stream, NULL, &dummy)) {
-             data->last_activity = time_msec();
-         }
+         (data->stream->class->sendbuf)(data->stream, NULL, &dummy);
     } else {
          stream_run(data->stream);
     }
@@ -317,7 +315,6 @@ static int do_async_flush(struct async_data *data) {
                 if (retval > 0) {
                     data->output_count--;
                     data->backlog -= retval;
-                    data->last_activity = time_msec();
                 }
             } else {
                 /* unsuccessful enqueue - push element back onto list*/
@@ -333,7 +330,6 @@ static int do_async_flush(struct async_data *data) {
                     data->output_count--;
                     ofpbuf_delete(buf);
                 }
-                data->last_activity = time_msec();
             } 
         }
         if (retval <= 0) {
@@ -377,7 +373,6 @@ static ssize_t do_async_recv(struct async_data *data) {
         retval = stream_recv(data->stream, byteq_head(&data->input), chunk);
         if (retval > 0) {
             byteq_advance_head(&data->input, retval);
-            data->last_activity = time_msec();
         }
         data->rx_error = retval;
     } 
@@ -406,7 +401,7 @@ void async_stream_run(struct async_data *data) {
     if (data->async_mode) {
         //latch_set(&data->run_notify);
     } else {
-        stream_run(data->stream);
+        stream_run_or_flush(data);
     }
 }
 
@@ -414,14 +409,6 @@ void async_invoke_notify(struct async_data *data) {
     if (data->async_mode) {
         latch_set(&data->tx_notify);
     }
-}
-
-long long int async_last_activity(struct async_data *data) {
-    long long int retval;
-    ovs_mutex_lock(&data->mutex);
-    retval = data->last_activity;
-    ovs_mutex_unlock(&data->mutex);
-    return retval;
 }
 
 int async_get_backlog(const struct async_data *data) {

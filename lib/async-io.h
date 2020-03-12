@@ -45,7 +45,6 @@ struct async_data {
     struct latch rx_notify, tx_notify, run_notify;
     bool async_mode;
     bool flush_required;
-    long long int last_activity;
     struct byteq input;
     uint8_t input_buffer[ASYNC_BUFFER_SIZE];
 };

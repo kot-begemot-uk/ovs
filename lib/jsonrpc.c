@@ -949,9 +949,23 @@ jsonrpc_session_run(struct jsonrpc_session *s)
 
     if (s->rpc) {
         int error;
+        size_t backlog;
+
+        backlog = jsonrpc_get_backlog(s->rpc);
 
         jsonrpc_run(s->rpc);
-        reconnect_activity(s->reconnect, async_last_activity(&s->rpc->data));
+        if (s->rpc->data.async_mode || (jsonrpc_get_backlog(s->rpc) < backlog)) {
+            /* Data previously caught in a queue was successfully sent (or
+             * there's an error, which we'll catch below.)
+             *
+             * We don't count data that is successfully sent immediately as
+             * activity, because there's a lot of queuing downstream from us,
+             * which means that we can push a lot of data into a connection
+             * that has stalled and won't ever recover.
+             */
+            reconnect_activity(s->reconnect, time_msec());
+        }
+
 
         error = jsonrpc_get_status(s->rpc);
         if (error) {
