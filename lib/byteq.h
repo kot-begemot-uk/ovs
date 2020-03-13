@@ -19,13 +19,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "ovs-atomic.h"
 
-/* General-purpose circular queue of bytes. */
+/* General-purpose circular queue of bytes.
+ * Thread safe for simultaneous use by a SINGLE producer and SINGLE
+ * consumer (1:1).
+ */
 struct byteq {
     uint8_t *buffer;            /* Circular queue. */
     unsigned int size;          /* Number of bytes allocated for 'buffer'. */
     unsigned int head;          /* Head of queue. */
     unsigned int tail;          /* Chases the head. */
+    atomic_int used;
 };
 
 void byteq_init(struct byteq *, uint8_t *buffer, size_t size);
