@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "ovs-atomic.h"
 
 /* General-purpose circular queue of bytes. */
 struct byteq {
@@ -26,6 +27,7 @@ struct byteq {
     unsigned int size;          /* Number of bytes allocated for 'buffer'. */
     unsigned int head;          /* Head of queue. */
     unsigned int tail;          /* Chases the head. */
+    atomic_int used;
 };
 
 void byteq_init(struct byteq *, uint8_t *buffer, size_t size);
