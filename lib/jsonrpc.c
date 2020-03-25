@@ -112,7 +112,7 @@ jsonrpc_run(struct jsonrpc *rpc)
         return;
     }
 
-    stream_run(rpc->data.stream);
+    async_stream_run(adata(rpc));
     do {
         retval = async_stream_flush(&rpc->data);
         if (retval < 0) {
@@ -131,9 +131,13 @@ void
 jsonrpc_wait(struct jsonrpc *rpc)
 {
     if (!rpc->status) {
-        stream_run_wait(rpc->data.stream);
-        if (!ovs_list_is_empty(async_get_output(adata(rpc)))) {
-            stream_send_wait(async_get_stream(adata(rpc)));
+        if (adata(rpc)->async_mode) {
+            async_recv_wait(adata(rpc));
+        } else {
+            stream_run_wait(rpc->data.stream);
+            if (!async_output_is_empty(adata(rpc))) {
+                stream_send_wait(async_get_stream(adata(rpc)));
+            }
         }
     }
 }
@@ -278,8 +282,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         size_t n, used;
 
         /* Fill our input buffer if it's empty. */
-        async_stream_recv(adata(rpc));
-        retval = rpc->data.rx_error;
+        retval = async_stream_recv(adata(rpc));
         if (retval < 0) {
             if (retval == -EAGAIN) {
                 return EAGAIN;
@@ -299,6 +302,9 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
             rpc->parser = json_parser_create(0);
         }
         n = byteq_tailroom(async_get_input(adata(rpc)));
+        if (n == 0) {
+            break;
+        }
         used = json_parser_feed(rpc->parser,
                         (char *) byteq_tail(async_get_input(adata(rpc))), n);
         byteq_advance_tail(async_get_input(adata(rpc)), used);
@@ -332,7 +338,7 @@ jsonrpc_recv_wait(struct jsonrpc *rpc)
     if (rpc->status || !byteq_is_empty(async_get_input(adata(rpc)))) {
         poll_immediate_wake_at(rpc->name);
     } else {
-        stream_recv_wait(async_get_stream(adata(rpc)));
+        async_recv_wait(adata(rpc));
     }
 }
 
@@ -355,7 +361,7 @@ jsonrpc_send_block(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     for (;;) {
         jsonrpc_run(rpc);
-        if (ovs_list_is_empty(async_get_output(adata(rpc))) || rpc->status) {
+        if (async_output_is_empty(adata(rpc)) || rpc->status) {
             return rpc->status;
         }
         jsonrpc_wait(rpc);
