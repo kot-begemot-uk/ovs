@@ -77,14 +77,14 @@ async_append_destroy(struct async_append *ap)
 }
 
 static bool
-async_append_is_full(const struct async_append *ap)
+async_append_is_full(struct async_append *ap)
 {
     return (ap->aiocb_head - ap->aiocb_tail >= MAX_CBS
             || byteq_is_full(&ap->byteq));
 }
 
 static bool
-async_append_is_empty(const struct async_append *ap)
+async_append_is_empty(struct async_append *ap)
 {
     return byteq_is_empty(&ap->byteq);
 }
