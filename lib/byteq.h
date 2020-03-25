@@ -31,10 +31,10 @@ struct byteq {
 };
 
 void byteq_init(struct byteq *, uint8_t *buffer, size_t size);
-int byteq_used(const struct byteq *);
-int byteq_avail(const struct byteq *);
-bool byteq_is_empty(const struct byteq *);
-bool byteq_is_full(const struct byteq *);
+int byteq_used(struct byteq *);
+int byteq_avail(struct byteq *);
+bool byteq_is_empty(struct byteq *);
+bool byteq_is_full(struct byteq *);
 void byteq_put(struct byteq *, uint8_t c);
 void byteq_putn(struct byteq *, const void *, size_t n);
 void byteq_put_string(struct byteq *, const char *);
@@ -43,9 +43,9 @@ int byteq_write(struct byteq *, int fd);
 int byteq_read(struct byteq *, int fd);
 
 uint8_t *byteq_head(struct byteq *);
-int byteq_headroom(const struct byteq *);
+int byteq_headroom(struct byteq *);
 void byteq_advance_head(struct byteq *, unsigned int n);
-int byteq_tailroom(const struct byteq *);
+int byteq_tailroom(struct byteq *);
 const uint8_t *byteq_tail(const struct byteq *);
 void byteq_advance_tail(struct byteq *, unsigned int n);
 
