@@ -118,6 +118,11 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
            error = EAGAIN;
         }
 #endif
+#ifdef __linux__
+        if (error == ENOBUFS) {
+           error = EAGAIN;
+        }
+#endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "recv: %s", sock_strerror(error));
         }
