@@ -444,10 +444,14 @@ bool async_output_is_empty(struct async_data *data) {
 }
 
 long async_get_backlog(struct async_data *data) {
-    if (data->async_mode) {
-        return 0; /* we pretend we have no backlog if we are async */
-    }
-    return data->backlog;
+    int retval;
+    /* This is used only by the unixctl connection
+     * so not worth it to convert backlog to atomics
+     */
+    ovs_mutex_lock(&data->mutex);
+    retval = data->backlog;
+    ovs_mutex_unlock(&data->mutex);
+    return retval;
 }
 
 bool async_get_active(struct async_data *data) {
