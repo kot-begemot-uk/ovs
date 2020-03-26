@@ -432,7 +432,13 @@ struct stream *async_get_stream(struct async_data *data) {
 bool async_output_is_empty(struct async_data *data) {
     bool retval;
     ovs_mutex_lock(&data->mutex);
-    retval = ovs_list_is_empty(&data->output);
+    /* backlog tracks backlog across the full stack all the
+     * way to the actual send. It is the source of truth
+     * if we have output or not so anybody asking if we
+     * have output should be told if we have backlog
+     * instead.
+     */
+    retval = (data->backlog == 0);
     ovs_mutex_unlock(&data->mutex);
     return retval;
 }
