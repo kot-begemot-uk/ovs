@@ -238,12 +238,29 @@ async_stream_disable(struct async_data *data)
 {
     struct async_io_control *target_control;
     int count = 0;
+    bool needs_wake = false;
+
 
     if (data->async_mode) {
-        while (not_in_error(data) && data->backlog && count < 5) {
-            latch_set(&data->tx_run_notify);
+        if (not_in_error(data) && data->backlog && count < 5) {
+            needs_wake = true;
             latch_poll(&data->rx_notify);
+            latch_wait(&data->rx_notify);
+            latch_set(&data->tx_run_notify);
+            /* limit this to 50ms - should be enough for
+             * a single flush and we will not get stuck here
+             * waiting for a send to complete
+             */
+            poll_timer_wait(50);
+            poll_block();
             count ++;
+        }
+        if (needs_wake) {
+            /* we have lost all poll-wait info because we block()-ed
+             * locally, we need to force the upper layers to rerun so
+             * that they reinstate the correct waits
+             */
+            poll_immediate_wake();
         }
         target_control = &io_pool->controls[data->async_id % io_pool->size];
         ovs_mutex_lock(&target_control->mutex);
@@ -362,7 +379,7 @@ static int do_async_recv(struct async_data *data) {
                     data->stream, byteq_head(&data->input), chunk);
             if (retval > 0) {
                 byteq_advance_head(&data->input, retval);
-           }
+            }
         }
     }
     if (retval > 0 || retval == -EAGAIN) {

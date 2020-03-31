@@ -207,7 +207,6 @@ fd_flush(struct stream *stream, int *retval)
         LIST_FOR_EACH (buf, list_node, &sfd->output) {
             msg.msg_iov[i].iov_base = buf->data;
             msg.msg_iov[i].iov_len = buf->size;
-            ovs_assert(i < sfd->queue_depth);
             i++;
         }
 
