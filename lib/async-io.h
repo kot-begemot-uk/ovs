@@ -45,7 +45,7 @@ struct async_data {
     uint32_t async_id;
     struct latch rx_notify, tx_run_notify;
     struct ovs_mutex mutex;
-    bool async_mode;
+    bool async_mode, should_notify;
     struct byteq input;
     uint8_t input_buffer[ASYNC_BUFFER_SIZE];
 };

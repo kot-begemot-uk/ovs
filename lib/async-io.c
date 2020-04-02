@@ -101,10 +101,12 @@ static void *default_async_io_helper(void *arg) {
                 } else {
                     poll_timer_wait(1);
                     retval = 0;
+                    data->should_notify = true;
                 }
 
-                if (!byteq_is_empty(&data->input)) {
+                if (data->should_notify && (!byteq_is_empty(&data->input))) {
                     latch_set(&data->rx_notify);
+                    data->should_notify = false;
                 }
             }
             if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
@@ -214,6 +216,7 @@ async_init_data(struct async_data *data, struct stream *stream)
             io_pool = add_pool(default_async_io_helper);
         }
         data->async_id = random_uint32();
+        data->should_notify = true;
         target_control = &io_pool->controls[data->async_id % io_pool->size];
         /* these are just fd pairs, no need to play with pointers, we
          * can pass them around
@@ -379,6 +382,7 @@ static int do_async_recv(struct async_data *data) {
                     data->stream, byteq_head(&data->input), chunk);
             if (retval > 0) {
                 byteq_advance_head(&data->input, retval);
+                data->should_notify = true;
             }
         }
     }
