@@ -65,6 +65,10 @@ static int do_stream_flush(struct async_data *data);
 static inline bool not_in_error(struct async_data *data) {
     int rx_error, tx_error;
 
+    if (!data->valid) {
+        return false;
+    }
+
     atomic_read_relaxed(&data->rx_error, &rx_error);
     atomic_read_relaxed(&data->tx_error, &tx_error);
 
@@ -117,12 +121,13 @@ static void *default_async_io_helper(void *arg) {
             if (not_in_error(data) && data->backlog) {
                 stream_send_wait(data->stream);
             }
-            if (in_error(data)) {
+            if (data->valid && in_error(data)) {
                 /* make sure that the other thread(s) notice any errors.
                  * this should not be an else because errors may have
                  * changed inside the ifs above.
                  */
                 latch_set(&data->rx_notify);
+                data->valid = false;
             }
             ovs_mutex_unlock(&data->mutex);
         }
@@ -209,6 +214,7 @@ async_init_data(struct async_data *data, struct stream *stream)
     data->active = ATOMIC_VAR_INIT(false);
     ovs_mutex_init(&data->mutex);
     data->async_mode = allow_async_io;
+    data->valid = true;
     if (data->async_mode) {
         if (!io_pool) {
             io_pool = add_pool(default_async_io_helper);
