@@ -93,7 +93,7 @@ static void *default_async_io_helper(void *arg) {
         ovs_mutex_lock(&io_control->mutex);
         latch_poll(&io_control->async_latch);
         LIST_FOR_EACH (data, list_node, &io_control->work_items) {
-
+            long backlog;
             ovs_mutex_lock(&data->mutex);
             retval = -EAGAIN;
             if (not_in_error(data)) {
@@ -118,7 +118,11 @@ static void *default_async_io_helper(void *arg) {
                 stream_run(data->stream);
                 do_stream_flush(data);
             }
-            if (not_in_error(data) && data->backlog) {
+            if (not_in_error(data)) {
+                stream_run_wait(data->stream);
+            }
+            atomic_read_relaxed(&data->backlog, &backlog);
+            if (not_in_error(data) && backlog) {
                 stream_send_wait(data->stream);
             }
             if (data->valid && in_error(data)) {
@@ -207,11 +211,11 @@ async_init_data(struct async_data *data, struct stream *stream)
     data->stream = stream;
     byteq_init(&data->input, data->input_buffer, ASYNC_BUFFER_SIZE);
     ovs_list_init(&data->output);
-    data->backlog = 0;
     data->output_count = 0;
     data->rx_error = ATOMIC_VAR_INIT(-EAGAIN);
     data->tx_error = ATOMIC_VAR_INIT(0);
     data->active = ATOMIC_VAR_INIT(false);
+    data->backlog = ATOMIC_VAR_INIT(0);
     ovs_mutex_init(&data->mutex);
     data->async_mode = allow_async_io;
     data->valid = true;
@@ -243,12 +247,11 @@ void
 async_stream_disable(struct async_data *data)
 {
     struct async_io_control *target_control;
-    int count = 0;
     bool needs_wake = false;
 
 
     if (data->async_mode) {
-        if (not_in_error(data) && data->backlog && count < 5) {
+        if (not_in_error(data) && (async_get_backlog(data) > 0)) {
             needs_wake = true;
             latch_poll(&data->rx_notify);
             latch_wait(&data->rx_notify);
@@ -259,7 +262,6 @@ async_stream_disable(struct async_data *data)
              */
             poll_timer_wait(50);
             poll_block();
-            count ++;
         }
         if (needs_wake) {
             /* we have lost all poll-wait info because we block()-ed
@@ -280,26 +282,27 @@ async_stream_disable(struct async_data *data)
 void
 async_cleanup_data(struct async_data *data)
 {
-    if (data->backlog) {
+    if (async_get_backlog(data)) {
         ofpbuf_list_delete(&data->output);
     }
-    data->backlog = 0;
+    atomic_store_relaxed(&data->backlog, 0);
     data->output_count = 0;
 }
 
 /* Routines intended for async IO */
 
-int async_stream_enqueue(struct async_data *data, struct ofpbuf *buf) {
-    int retval = -EAGAIN;
+long async_stream_enqueue(struct async_data *data, struct ofpbuf *buf) {
+    long retval = -EAGAIN;
+    long discard;
 
     ovs_mutex_lock(&data->mutex);
     if (buf) {
         ovs_list_push_back(&data->output, &buf->list_node);
         data->output_count ++;
-        data->backlog += buf->size;
+        atomic_add_relaxed(&data->backlog, buf->size, &discard);
         atomic_thread_fence(memory_order_release);
     }
-    retval = data->backlog;
+    atomic_read_relaxed(&data->backlog, &retval);
     ovs_mutex_unlock(&data->mutex);
     return retval;
 }
@@ -309,6 +312,7 @@ static int do_stream_flush(struct async_data *data) {
     int count = 0;
     bool stamp = false;
     int retval = -stream_connect(data->stream);
+    long discard;
 
     if (!retval) {
         while (!ovs_list_is_empty(&data->output) && count < 10) {
@@ -325,7 +329,7 @@ static int do_stream_flush(struct async_data *data) {
                 retval = stream_send(data->stream, buf->data, buf->size);
                 if (retval > 0) {
                     stamp = true;
-                    data->backlog -= retval;
+                    atomic_sub_relaxed(&data->backlog, retval, &discard);
                     ofpbuf_pull(buf, retval);
                     if (!buf->size) {
                         /* stream now owns buf */
@@ -344,7 +348,7 @@ static int do_stream_flush(struct async_data *data) {
             (data->stream->class->flush)(data->stream, &retval);
             if (retval > 0) {
                 stamp = true;
-                data->backlog -= retval;
+                atomic_sub_relaxed(&data->backlog, retval, &discard);
             }
         }
         if (stamp) {
@@ -366,7 +370,9 @@ int async_stream_flush(struct async_data *data) {
                                * background
                                */
         }
-        latch_set(&data->tx_run_notify);
+        if (async_get_backlog(data)) {
+            latch_set(&data->tx_run_notify);
+        }
     } else {
         retval = do_stream_flush(data);
     }
@@ -422,6 +428,8 @@ int async_stream_recv(struct async_data *data) {
 void async_stream_run(struct async_data *data) {
     if (!data->async_mode) {
         stream_run(data->stream);
+    } else {
+        latch_set(&data->tx_run_notify);
     }
  }
 
@@ -467,13 +475,11 @@ bool async_output_is_empty(struct async_data *data) {
 }
 
 long async_get_backlog(struct async_data *data) {
-    int retval;
+    long retval;
     /* This is used only by the unixctl connection
      * so not worth it to convert backlog to atomics
      */
-    ovs_mutex_lock(&data->mutex);
-    retval = data->backlog;
-    ovs_mutex_unlock(&data->mutex);
+    atomic_read_relaxed(&data->backlog, &retval);
     return retval;
 }
 
