@@ -93,7 +93,7 @@ static void *default_async_io_helper(void *arg) {
         ovs_mutex_lock(&io_control->mutex);
         latch_poll(&io_control->async_latch);
         LIST_FOR_EACH (data, list_node, &io_control->work_items) {
-            long backlog;
+            long backlog, oldbacklog;
             ovs_mutex_lock(&data->mutex);
             retval = -EAGAIN;
             if (not_in_error(data)) {
@@ -111,6 +111,7 @@ static void *default_async_io_helper(void *arg) {
             if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
                 stream_recv_wait(data->stream);
             }
+            atomic_read_relaxed(&data->backlog, &oldbacklog);
             if (not_in_error(data)) {
                 stream_run(data->stream);
                 do_stream_flush(data);
@@ -118,13 +119,19 @@ static void *default_async_io_helper(void *arg) {
             atomic_read_relaxed(&data->backlog, &backlog);
             if (not_in_error(data)) {
                 if (backlog) {
-                    stream_send_wait(data->stream);
-                } else {
                     /* upper layers will refuse to process rx
                      * until the tx is clear, so no point
                      * notifying them
                      */
-                    if (!byteq_is_empty(&data->input)) {
+                    stream_send_wait(data->stream);
+                } else {
+                    /* There is no backlog, so the rpc layer will
+                     * actually pay attention to our notifications
+                     * We issue a notification for both pending
+                     * input and what is the equivalent of
+                     * "IO Completion"
+                     */
+                    if (!byteq_is_empty(&data->input) || oldbacklog) {
                         latch_set(&data->rx_notify);
                     }
                 }
@@ -448,6 +455,7 @@ void async_io_kick(struct async_data *data) {
 
 void async_recv_wait(struct async_data *data) {
     if (data->async_mode) {
+        latch_poll(&data->rx_notify);
         latch_wait(&data->rx_notify);
     } else {
         stream_recv_wait(data->stream);
