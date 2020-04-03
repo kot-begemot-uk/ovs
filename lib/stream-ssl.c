@@ -884,8 +884,7 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
             /* We have room in our tx queue. */
             poll_immediate_wake();
         } else {
-            /* stream_run_wait() will do the right thing; don't bother with
-             * redundancy. */
+            poll_fd_wait(sslv->fd, POLLOUT);
         }
         break;
 
