@@ -107,9 +107,6 @@ static void *default_async_io_helper(void *arg) {
                     retval = 0;
                 }
 
-                if (!byteq_is_empty(&data->input)) {
-                    latch_set(&data->rx_notify);
-                }
             }
             if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
                 stream_recv_wait(data->stream);
@@ -118,12 +115,19 @@ static void *default_async_io_helper(void *arg) {
                 stream_run(data->stream);
                 do_stream_flush(data);
             }
-            if (not_in_error(data)) {
-                stream_run_wait(data->stream);
-            }
             atomic_read_relaxed(&data->backlog, &backlog);
-            if (not_in_error(data) && backlog) {
-                stream_send_wait(data->stream);
+            if (not_in_error(data)) {
+                if (backlog) {
+                    stream_send_wait(data->stream);
+                } else {
+                    /* upper layers will refuse to process rx
+                     * until the tx is clear, so no point
+                     * notifying them
+                     */
+                    if (!byteq_is_empty(&data->input)) {
+                        latch_set(&data->rx_notify);
+                    }
+                }
             }
             if (data->valid && in_error(data)) {
                 /* make sure that the other thread(s) notice any errors.
@@ -132,6 +136,9 @@ static void *default_async_io_helper(void *arg) {
                  */
                 latch_set(&data->rx_notify);
                 data->valid = false;
+            }
+            if (not_in_error(data)) {
+                stream_run_wait(data->stream);
             }
             ovs_mutex_unlock(&data->mutex);
         }
