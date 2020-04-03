@@ -64,7 +64,7 @@ struct async_io_pool {
 
 struct async_io_pool *add_pool(void *(*start)(void *));
 
-int async_stream_enqueue(struct async_data *, struct ofpbuf *buf);
+long async_stream_enqueue(struct async_data *, struct ofpbuf *buf);
 int async_stream_flush(struct async_data *);
 int async_stream_recv(struct async_data *);
 struct byteq *async_get_input(struct async_data *);
