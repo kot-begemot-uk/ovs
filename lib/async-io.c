@@ -125,7 +125,7 @@ static void *default_async_io_helper(void *arg) {
                      * notifying them
                      */
                     if (cpu_usage > 75) {
-                        VLOG(VLL_INFO, "scheduling a send wait on %p, %ld, %d", data->stream, backlog, data->output_count);
+                        VLOG(VLL_INFO, "scheduling a send wait on %p, %ld, %ld", data->stream, backlog, data->output_count);
                     }
                     stream_send_wait(data->stream);
                 } else {
