@@ -85,7 +85,8 @@ struct ssl_stream
     SSL *ssl;
     struct ofpbuf *txbuf;
     unsigned int session_nr;
-    int last_sent;
+    int last_enqueued;
+    long backlog_to_report;
 
     /* rx_want and tx_want record the result of the last call to SSL_read()
      * and SSL_write(), respectively:
@@ -305,7 +306,8 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->rx_want = sslv->tx_want = SSL_NOTHING;
     sslv->session_nr = next_session_nr++;
     sslv->n_head = 0;
-    sslv->last_sent = 0;
+    sslv->last_enqueued = 0;
+    sslv->backlog_to_report = 0;
 
     if (VLOG_IS_DBG_ENABLED()) {
         SSL_set_msg_callback(ssl, ssl_protocol_cb);
@@ -786,8 +788,11 @@ ssl_run(struct stream *stream)
 {
     struct ssl_stream *sslv = ssl_stream_cast(stream);
 
-    if (sslv->txbuf && ssl_do_tx(stream) != EAGAIN) {
-        ssl_clear_txbuf(sslv);
+    if (sslv->txbuf) {
+        if (ssl_do_tx(stream) != EAGAIN) {
+            sslv->backlog_to_report += sslv->last_enqueued;
+            ssl_clear_txbuf(sslv);
+        }
     }
 }
 
@@ -800,7 +805,7 @@ ssl_enqueue(struct stream *stream, struct ofpbuf *buf)
         return -EAGAIN;
     }
     sslv->txbuf = buf;
-    sslv->last_sent = n;
+    sslv->last_enqueued = n;
     return n;
 }
 
@@ -810,7 +815,12 @@ ssl_flush(struct stream *stream, int *retval)
     struct ssl_stream *sslv = ssl_stream_cast(stream);
 
     if (!sslv->txbuf) {
-        * retval = -EAGAIN;
+        if (sslv->backlog_to_report) {
+            * retval = sslv->backlog_to_report;
+            sslv->backlog_to_report = 0;
+        } else {
+            * retval = -EAGAIN;
+        }
         return true;
     } else {
         int error;
@@ -819,8 +829,9 @@ ssl_flush(struct stream *stream, int *retval)
         switch (error) {
         case 0:
             ssl_clear_txbuf(sslv);
-            * retval = sslv->last_sent;
-            sslv->last_sent = 0;
+            * retval = sslv->backlog_to_report + sslv->last_enqueued;
+            sslv->backlog_to_report = 0;
+            sslv->last_enqueued = 0;
             return true;
         case EAGAIN:
             * retval = 0;
