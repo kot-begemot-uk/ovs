@@ -119,10 +119,14 @@ static void *default_async_io_helper(void *arg) {
             atomic_read_relaxed(&data->backlog, &backlog);
             if (not_in_error(data)) {
                 if (backlog) {
+                    int cpu_usage =  get_cpu_usage();
                     /* upper layers will refuse to process rx
                      * until the tx is clear, so no point
                      * notifying them
                      */
+                    if (cpu_usage > 75) {
+                        VLOG(VLL_INFO, "scheduling a send wait on %p, %ld, %d", data->stream, backlog, data->output_count);
+                    }
                     stream_send_wait(data->stream);
                 } else {
                     /* There is no backlog, so the rpc layer will
@@ -136,7 +140,7 @@ static void *default_async_io_helper(void *arg) {
                     }
                 }
             }
-            if (data->valid && in_error(data)) {
+            if (in_error(data)) {
                 /* make sure that the other thread(s) notice any errors.
                  * this should not be an else because errors may have
                  * changed inside the ifs above.
@@ -335,6 +339,7 @@ static int do_stream_flush(struct async_data *data) {
                 ovs_list_remove(&buf->list_node);
                 retval = (data->stream->class->enqueue)(data->stream, buf);
                 if (retval > 0) {
+                    ovs_assert(data->output_count > 0);
                     data->output_count--;
                 } else {
                     ovs_list_push_front(&data->output, &buf->list_node);
@@ -375,9 +380,17 @@ static int do_stream_flush(struct async_data *data) {
 
 int async_stream_flush(struct async_data *data) {
     int retval;
+    int rx_error;
 
     if (data->async_mode) {
         atomic_read_relaxed(&data->tx_error, &retval);
+        atomic_read_relaxed(&data->rx_error, &rx_error);
+        if (
+            ((rx_error == 0) ||
+                (rx_error != -EAGAIN && rx_error < 0)) &&
+                (retval == -EAGAIN || retval > 0)) {
+            retval = -EPIPE;
+        }
         if (retval >= 0) {
             retval = -EAGAIN; /* fake a busy so that upper layers do not
                                * retry, we will flush the backlog in the
@@ -421,9 +434,15 @@ static int do_async_recv(struct async_data *data) {
 
 int async_stream_recv(struct async_data *data) {
     int retval = -EAGAIN;
+    int tx_error;
 
     if (data->async_mode) {
         atomic_read_relaxed(&data->rx_error, &retval);
+        atomic_read_relaxed(&data->tx_error, &tx_error);
+        if ((tx_error < 0 && tx_error != -EAGAIN) &&
+                (retval == -EAGAIN || retval > 0)) {
+            retval = -EPIPE;
+        }
         /* clear RX notifications */
         latch_poll(&data->rx_notify);
         /* fake a retval from byteq usage */

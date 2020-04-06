@@ -117,8 +117,13 @@ jsonrpc_run(struct jsonrpc *rpc)
         retval = async_stream_flush(&rpc->data);
         if (retval < 0) {
             if (retval != -EAGAIN) {
-                VLOG_WARN_RL(&rl, "%s: send error: %s",
-                             rpc->name, ovs_strerror(-retval));
+                if (retval != -EPIPE) { 
+                    /* epipe is usually not an error it is rx to tx
+                     * error mapping which is most likely an EOF
+                     */
+                    VLOG_WARN_RL(&rl, "%s: send error: %s",
+                                 rpc->name, ovs_strerror(-retval));
+                }
                 jsonrpc_error(rpc, -retval);
             }
         }

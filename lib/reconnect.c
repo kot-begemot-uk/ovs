@@ -17,6 +17,7 @@
 #include <config.h>
 #include "reconnect.h"
 
+#include <errno.h>
 #include <stdlib.h>
 
 #include "openvswitch/poll-loop.h"
@@ -340,7 +341,7 @@ reconnect_disconnected(struct reconnect *fsm, long long int now, int error)
     if (!(fsm->state & (S_BACKOFF | S_VOID))) {
         /* Report what happened. */
         if (fsm->state & (S_ACTIVE | S_IDLE)) {
-            if (error > 0) {
+            if (error > 0 && (error != EPIPE)) {
                 VLOG_WARN("%s: connection dropped (%s)",
                           fsm->name, ovs_strerror(error));
             } else if (error == EOF) {

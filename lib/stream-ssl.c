@@ -881,7 +881,11 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
 
     case STREAM_SEND:
         if (!sslv->txbuf) {
+            int cpu_usage = get_cpu_usage();
             /* We have room in our tx queue. */
+            if (cpu_usage > 75) {
+                VLOG(VLL_INFO, "stream %p has empty bufs", stream);
+            }
             poll_immediate_wake();
         } else {
             poll_fd_wait(sslv->fd, POLLOUT);
