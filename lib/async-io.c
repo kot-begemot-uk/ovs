@@ -225,13 +225,6 @@ async_init_data(struct async_data *data, struct stream *stream)
 
     data->stream = stream;
 #ifdef __linux__
-    /* if asked to allocate a pagesize multiple, libc usually
-     * does the right thing and allocates it on a page boundary
-     * this decreases the overhead when working with the buffer
-     * across the board
-     * We check the result for sanity, just in case and
-     * if we like it, we use it to size the buffer
-     */
     buffer_size = getpagesize();
     if ((buffer_size & (buffer_size - 1)) != 0) {
         buffer_size = ASYNC_BUFFER_SIZE;
@@ -239,7 +232,16 @@ async_init_data(struct async_data *data, struct stream *stream)
 #else 
     buffer_size = ASYNC_BUFFER_SIZE;
 #endif
+#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+    /* try to allocate a buffer_size as aligned, that by default is one page
+     * if that fails, fall back to normal memory allocation.
+     */
+    if (posix_memalign((void **) &data->input_buffer, buffer_size, buffer_size)) {
+        data->input_buffer = xmalloc(buffer_size);
+    }
+#else
     data->input_buffer = xmalloc(buffer_size);
+#endif
     byteq_init(&data->input, data->input_buffer, buffer_size);
     ovs_list_init(&data->output);
     data->output_count = 0;
