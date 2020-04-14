@@ -30,7 +30,7 @@
 #include "byteq.h"
 #include "util.h"
 
-#define ASYNC_BUFFER_SIZE (512)
+#define ASYNC_BUFFER_SIZE (4096)
 
 struct stream;
 
@@ -47,7 +47,7 @@ struct async_data {
     struct ovs_mutex mutex;
     bool async_mode, valid;
     struct byteq input;
-    uint8_t input_buffer[ASYNC_BUFFER_SIZE];
+    uint8_t *input_buffer;
 };
 
 struct async_io_control {

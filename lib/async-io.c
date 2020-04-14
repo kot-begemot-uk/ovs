@@ -17,6 +17,7 @@
 #include <config.h>
 #include "stream-provider.h"
 #include <errno.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -106,7 +107,6 @@ static void *default_async_io_helper(void *arg) {
                     poll_timer_wait(1);
                     retval = 0;
                 }
-
             }
             if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
                 stream_recv_wait(data->stream);
@@ -221,9 +221,26 @@ void
 async_init_data(struct async_data *data, struct stream *stream)
 {
     struct async_io_control *target_control;
+    unsigned int buffer_size;
 
     data->stream = stream;
-    byteq_init(&data->input, data->input_buffer, ASYNC_BUFFER_SIZE);
+#ifdef __linux__
+    /* if asked to allocate a pagesize multiple, libc usually
+     * does the right thing and allocates it on a page boundary
+     * this decreases the overhead when working with the buffer
+     * across the board
+     * We check the result for sanity, just in case and
+     * if we like it, we use it to size the buffer
+     */
+    buffer_size = getpagesize();
+    if ((buffer_size & (buffer_size - 1)) != 0) {
+        buffer_size = ASYNC_BUFFER_SIZE;
+    }
+#else 
+    buffer_size = ASYNC_BUFFER_SIZE;
+#endif
+    data->input_buffer = xmalloc(buffer_size);
+    byteq_init(&data->input, data->input_buffer, buffer_size);
     ovs_list_init(&data->output);
     data->output_count = 0;
     data->rx_error = ATOMIC_VAR_INIT(-EAGAIN);
@@ -289,6 +306,7 @@ async_stream_disable(struct async_data *data)
         ovs_list_remove(&data->list_node);
         ovs_mutex_unlock(&target_control->mutex);
         data->async_mode = false;
+        free(data->input_buffer);
         latch_destroy(&data->rx_notify);
     }
 }
