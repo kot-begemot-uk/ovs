@@ -280,6 +280,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 
     for (i = 0; i < 50; i++) {
         size_t n, used;
+        bool needs_kick = (byteq_avail(async_get_input(adata(rpc))) == 0);
 
         /* Fill our input buffer if it's empty. */
         retval = async_stream_recv(adata(rpc));
@@ -308,6 +309,9 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         used = json_parser_feed(rpc->parser,
                         (char *) byteq_tail(async_get_input(adata(rpc))), n);
         byteq_advance_tail(async_get_input(adata(rpc)), used);
+        if (needs_kick) {
+            async_io_kick(adata(rpc));
+        }
 
         /* If we have complete JSON, attempt to parse it as JSON-RPC. */
         if (json_parser_is_done(rpc->parser)) {
