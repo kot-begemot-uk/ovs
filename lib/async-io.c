@@ -17,6 +17,7 @@
 #include <config.h>
 #include "stream-provider.h"
 #include <errno.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -106,7 +107,6 @@ static void *default_async_io_helper(void *arg) {
                     poll_timer_wait(1);
                     retval = 0;
                 }
-
             }
             if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
                 stream_recv_wait(data->stream);
@@ -221,9 +221,29 @@ void
 async_init_data(struct async_data *data, struct stream *stream)
 {
     struct async_io_control *target_control;
+    unsigned int buffer_size;
 
     data->stream = stream;
-    byteq_init(&data->input, data->input_buffer, ASYNC_BUFFER_SIZE);
+#ifdef __linux__
+    buffer_size = getpagesize();
+    if (!is_pow2(buffer_size)) {
+        buffer_size = ASYNC_BUFFER_SIZE;
+    }
+#else
+    buffer_size = ASYNC_BUFFER_SIZE;
+#endif
+#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
+    /* try to allocate a buffer_size as aligned, that by default is one page
+     * if that fails, fall back to normal memory allocation.
+     */
+    if (posix_memalign(
+            (void **) &data->input_buffer, buffer_size, buffer_size)) {
+        data->input_buffer = xmalloc(buffer_size);
+    }
+#else
+    data->input_buffer = xmalloc(buffer_size);
+#endif
+    byteq_init(&data->input, data->input_buffer, buffer_size);
     ovs_list_init(&data->output);
     data->output_count = 0;
     data->rx_error = ATOMIC_VAR_INIT(-EAGAIN);
@@ -290,6 +310,10 @@ async_stream_disable(struct async_data *data)
         ovs_mutex_unlock(&target_control->mutex);
         data->async_mode = false;
         latch_destroy(&data->rx_notify);
+    }
+    if (data->input_buffer) {
+        free(data->input_buffer);
+        data->input_buffer = NULL;
     }
 }
 
