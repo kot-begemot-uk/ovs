@@ -44,6 +44,7 @@ VLOG_DEFINE_THIS_MODULE(conntrack);
 
 COVERAGE_DEFINE(conntrack_full);
 COVERAGE_DEFINE(conntrack_long_cleanup);
+COVERAGE_DEFINE(conntrack_l4csum_err);
 
 struct conn_lookup_ctx {
     struct conn_key key;
@@ -1110,6 +1111,9 @@ conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
             ovs_mutex_unlock(&ct->ct_lock);
             create_new_conn = true;
             break;
+        case CT_UPDATE_VALID_NEW:
+            pkt->md.ct_state |= CS_NEW;
+            break;
         default:
             OVS_NOT_REACHED();
         }
@@ -1274,6 +1278,11 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             const struct nat_action_info_t *nat_action_info,
             ovs_be16 tp_src, ovs_be16 tp_dst, const char *helper)
 {
+    /* Reset ct_state whenever entering a new zone. */
+    if (pkt->md.ct_state && pkt->md.ct_zone != zone) {
+        pkt->md.ct_state = 0;
+    }
+
     bool create_new_conn = false;
     conn_key_lookup(ct, &ctx->key, ctx->hash, now, &ctx->conn, &ctx->reply);
     struct conn *conn = ctx->conn;
@@ -1297,9 +1306,10 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             conn_key_lookup(ct, &ctx->key, hash, now, &conn, &ctx->reply);
 
             if (!conn) {
-                pkt->md.ct_state |= CS_TRACKED | CS_INVALID;
+                pkt->md.ct_state |= CS_INVALID;
+                write_ct_md(pkt, zone, NULL, NULL, NULL);
                 char *log_msg = xasprintf("Missing master conn %p", rev_conn);
-                ct_print_conn_info(conn, log_msg, VLL_INFO, true, true);
+                ct_print_conn_info(rev_conn, log_msg, VLL_INFO, true, true);
                 free(log_msg);
                 return;
             }
@@ -1652,6 +1662,7 @@ checksum_valid(const struct conn_key *key, const void *data, size_t size,
     } else if (key->dl_type == htons(ETH_TYPE_IPV6)) {
         return packet_csum_upperlayer6(l3, data, key->nw_proto, size) == 0;
     } else {
+        COVERAGE_INC(conntrack_l4csum_err);
         return false;
     }
 }
@@ -1695,7 +1706,12 @@ check_l4_udp(const struct conn_key *key, const void *data, size_t size,
 static inline bool
 check_l4_icmp(const void *data, size_t size, bool validate_checksum)
 {
-    return validate_checksum ? csum(data, size) == 0 : true;
+    if (validate_checksum && csum(data, size) != 0) {
+        COVERAGE_INC(conntrack_l4csum_err);
+        return false;
+    } else {
+        return true;
+    }
 }
 
 static inline bool

@@ -259,6 +259,7 @@ Markos Chandras                    mchandras@suse.de
 Martin Casado                      casado@cs.stanford.edu
 Martin Fong                        mwfong@csl.sri.com
 Martino Fornasa                    mf@fornasa.it
+Martin Varghese                    martin.varghese@nokia.com
 Martin Xu                          martinxu9.ovs@gmail.com
 Martin Zhang                       martinbj2008@gmail.com
 Maryam Tahhan                      maryam.tahhan@intel.com
@@ -382,6 +383,7 @@ Tuan Nguyen                        tuan.nguyen@veriksystems.com
 Tyler Coumbes                      coumbes@gmail.com
 Tony van der Peet                  tony.vanderpeet@alliedtelesis.co.nz
 Tonghao Zhang                      xiangxia.m.yue@gmail.com
+Usman Ansari                       ua1422@gmail.com
 Valient Gough                      vgough@pobox.com
 Venkata Anil Kommaddi              vkommadi@redhat.com
 Vishal Deep Ajmera                 vishal.deep.ajmera@ericsson.com

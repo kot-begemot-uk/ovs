@@ -53,7 +53,7 @@ Enabling TSO
 
 The TSO support may be enabled via a global config value
 ``userspace-tso-enable``.  Setting this to ``true`` enables TSO support for
-all ports.
+all ports.::
 
     $ ovs-vsctl set Open_vSwitch . other_config:userspace-tso-enable=true
 
@@ -90,6 +90,13 @@ Limitations
 The current OvS userspace `TSO` implementation supports flat and VLAN networks
 only (i.e. no support for `TSO` over tunneled connection [VxLAN, GRE, IPinIP,
 etc.]).
+
+The NIC driver must support and advertise checksum offload for TCP and UDP.
+However, SCTP is not mandatory because very few drivers advertised support
+and it wasn't a widely used protocol at the moment this feature was introduced
+in Open vSwitch. Currently, if the NIC supports that, then the feature is
+enabled, otherwise TSO can still be enabled but SCTP packets sent to the NIC
+will be dropped.
 
 There is no software implementation of TSO, so all ports attached to the
 datapath must support TSO or packets using that feature will be dropped

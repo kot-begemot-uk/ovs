@@ -551,6 +551,7 @@ struct dp_netdev_flow {
     struct packet_batch_per_flow *batch;
 
     /* Packet classification. */
+    char *dp_extra_info;         /* String to return in a flow dump/get. */
     struct dpcls_rule cr;        /* In owning dp_netdev's 'cls'. */
     /* 'cr' must be the last member. */
 };
@@ -2096,6 +2097,7 @@ static void
 dp_netdev_flow_free(struct dp_netdev_flow *flow)
 {
     dp_netdev_actions_free(dp_netdev_flow_get_actions(flow));
+    free(flow->dp_extra_info);
     free(flow);
 }
 
@@ -2510,6 +2512,7 @@ dp_netdev_flow_offload_main(void *data OVS_UNUSED)
         VLOG_DBG("%s to %s netdev flow\n",
                  ret == 0 ? "succeed" : "failed", op);
         dp_netdev_free_flow_offload(offload);
+        ovsrcu_quiesce();
     }
 
     return NULL;
@@ -3158,21 +3161,7 @@ dp_netdev_flow_to_dpif_flow(const struct dp_netdev *dp,
     flow->pmd_id = netdev_flow->pmd_id;
 
     get_dpif_flow_status(dp, netdev_flow, &flow->stats, &flow->attrs);
-
-    struct ds extra_info = DS_EMPTY_INITIALIZER;
-    size_t unit;
-
-    ds_put_cstr(&extra_info, "miniflow_bits(");
-    FLOWMAP_FOR_EACH_UNIT (unit) {
-        if (unit) {
-            ds_put_char(&extra_info, ',');
-        }
-        ds_put_format(&extra_info, "%d",
-                      count_1bits(netdev_flow->cr.mask->mf.map.bits[unit]));
-    }
-    ds_put_char(&extra_info, ')');
-    flow->attrs.dp_extra_info = ds_steal_cstr(&extra_info);
-    ds_destroy(&extra_info);
+    flow->attrs.dp_extra_info = netdev_flow->dp_extra_info;
 }
 
 static int
@@ -3312,9 +3301,11 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
                    const struct nlattr *actions, size_t actions_len)
     OVS_REQUIRES(pmd->flow_mutex)
 {
+    struct ds extra_info = DS_EMPTY_INITIALIZER;
     struct dp_netdev_flow *flow;
     struct netdev_flow_key mask;
     struct dpcls *cls;
+    size_t unit;
 
     /* Make sure in_port is exact matched before we read it. */
     ovs_assert(match->wc.masks.in_port.odp_port == ODPP_NONE);
@@ -3354,6 +3345,18 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     /* Select dpcls for in_port. Relies on in_port to be exact match. */
     cls = dp_netdev_pmd_find_dpcls(pmd, in_port);
     dpcls_insert(cls, &flow->cr, &mask);
+
+    ds_put_cstr(&extra_info, "miniflow_bits(");
+    FLOWMAP_FOR_EACH_UNIT (unit) {
+        if (unit) {
+            ds_put_char(&extra_info, ',');
+        }
+        ds_put_format(&extra_info, "%d",
+                      count_1bits(flow->cr.mask->mf.map.bits[unit]));
+    }
+    ds_put_char(&extra_info, ')');
+    flow->dp_extra_info = ds_steal_cstr(&extra_info);
+    ds_destroy(&extra_info);
 
     cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),
                 dp_netdev_flow_hash(&flow->ufid));
@@ -4938,9 +4941,17 @@ reconfigure_datapath(struct dp_netdev *dp)
 
     /* Check for all the ports that need reconfiguration.  We cache this in
      * 'port->need_reconfigure', because netdev_is_reconf_required() can
-     * change at any time. */
+     * change at any time.
+     * Also mark for reconfiguration all ports which will likely change their
+     * 'dynamic_txqs' parameter.  It's required to stop using them before
+     * changing this setting and it's simpler to mark ports here and allow
+     * 'pmd_remove_stale_ports' to remove them from threads.  There will be
+     * no actual reconfiguration in 'port_reconfigure' because it's
+     * unnecessary.  */
     HMAP_FOR_EACH (port, node, &dp->ports) {
-        if (netdev_is_reconf_required(port->netdev)) {
+        if (netdev_is_reconf_required(port->netdev)
+            || (port->dynamic_txqs
+                != (netdev_n_txq(port->netdev) < wanted_txqs))) {
             port->need_reconfigure = true;
         }
     }
@@ -5724,6 +5735,7 @@ dp_netdev_run_meter(struct dp_netdev *dp, struct dp_packet_batch *packets_,
     struct dp_packet *packet;
     long long int long_delta_t; /* msec */
     uint32_t delta_t; /* msec */
+    uint32_t delta_in_us; /* usec */
     const size_t cnt = dp_packet_batch_size(packets_);
     uint32_t bytes, volume;
     int exceeded_band[NETDEV_MAX_BURST];
@@ -5754,6 +5766,9 @@ dp_netdev_run_meter(struct dp_netdev *dp, struct dp_packet_batch *packets_,
            Assuming that all racing threads received packets at the same time
            to avoid overflow. */
         long_delta_t = 0;
+        delta_in_us  = 0;
+    } else {
+        delta_in_us  = (now - meter->used) % 1000;
     }
 
     /* Make sure delta_t will not be too large, so that bucket will not
@@ -5789,6 +5804,7 @@ dp_netdev_run_meter(struct dp_netdev *dp, struct dp_packet_batch *packets_,
 
         /* Update band's bucket. */
         band->bucket += delta_t * band->up.rate;
+        band->bucket += delta_in_us * band->up.rate / 1000;
         if (band->bucket > band->up.burst_size) {
             band->bucket = band->up.burst_size;
         }

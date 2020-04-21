@@ -1171,11 +1171,15 @@ xlate_xport_copy(struct xbridge *xbridge, struct xbundle *xbundle,
  *
  * A sample workflow:
  *
- * xlate_txn_start();
- * ...
- * edit_xlate_configuration();
- * ...
- * xlate_txn_commit(); */
+ *     xlate_txn_start();
+ *     ...
+ *     edit_xlate_configuration();
+ *     ...
+ *     xlate_txn_commit();
+ *
+ * The ovsrcu_synchronize() call here also ensures that the upcall threads
+ * retain no references to anything in the previous configuration.
+ */
 void
 xlate_txn_commit(void)
 {
@@ -1516,14 +1520,31 @@ xlate_lookup_ofproto_(const struct dpif_backer *backer,
             return NULL;
         }
 
-        /* If recirculation was initiated due to bond (in_port = OFPP_NONE)
-         * then frozen state is static and xport_uuid is not defined, so xport
-         * cannot be restored from frozen state. */
-        if (recirc_id_node->state.metadata.in_port != OFPP_NONE) {
+        ofp_port_t in_port = recirc_id_node->state.metadata.in_port;
+        if (in_port != OFPP_NONE && in_port != OFPP_CONTROLLER) {
             struct uuid xport_uuid = recirc_id_node->state.xport_uuid;
             xport = xport_lookup_by_uuid(xcfg, &xport_uuid);
             if (xport && xport->xbridge && xport->xbridge->ofproto) {
                 goto out;
+            }
+        } else {
+            /* OFPP_NONE and OFPP_CONTROLLER are not real ports.  They indicate
+             * that the packet originated from the controller via an OpenFlow
+             * "packet-out".  The right thing to do is to find just the
+             * ofproto.  There is no xport, which is OK.
+             *
+             * OFPP_NONE can also indicate that a bond caused recirculation. */
+            struct uuid uuid = recirc_id_node->state.ofproto_uuid;
+            const struct xbridge *bridge = xbridge_lookup_by_uuid(xcfg, &uuid);
+            if (bridge && bridge->ofproto) {
+                if (errorp) {
+                    *errorp = NULL;
+                }
+                *xportp = NULL;
+                if (ofp_in_port) {
+                    *ofp_in_port = in_port;
+                }
+                return bridge->ofproto;
             }
         }
     }
@@ -1884,9 +1905,12 @@ bucket_is_alive(const struct xlate_ctx *ctx,
 
     return (!ofputil_bucket_has_liveness(bucket)
             || (bucket->watch_port != OFPP_ANY
+               && bucket->watch_port != OFPP_CONTROLLER
                && odp_port_is_alive(ctx, bucket->watch_port))
             || (bucket->watch_group != OFPG_ANY
-               && group_is_alive(ctx, bucket->watch_group, depth + 1)));
+               && group_is_alive(ctx, bucket->watch_group, depth + 1))
+            || (bucket->watch_port == OFPP_CONTROLLER
+               && ofproto_is_alive(&ctx->xbridge->ofproto->up)));
 }
 
 static void
@@ -3548,6 +3572,7 @@ propagate_tunnel_data_to_flow(struct xlate_ctx *ctx, struct eth_addr dmac,
         break;
     case OVS_VPORT_TYPE_VXLAN:
     case OVS_VPORT_TYPE_GENEVE:
+    case OVS_VPORT_TYPE_GTPU:
         nw_proto = IPPROTO_UDP;
         break;
     case OVS_VPORT_TYPE_LISP:
@@ -4099,7 +4124,7 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
 
     /* If 'struct flow' gets additional metadata, we'll need to zero it out
      * before traversing a patch port. */
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 41);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 42);
     memset(&flow_tnl, 0, sizeof flow_tnl);
 
     if (!check_output_prerequisites(ctx, xport, flow, check_stp)) {
@@ -7519,7 +7544,8 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         /* Restore pipeline metadata. May change flow's in_port and other
          * metadata to the values that existed when freezing was triggered. */
-        frozen_metadata_to_flow(&state->metadata, flow);
+        frozen_metadata_to_flow(&ctx.xbridge->ofproto->up,
+                                &state->metadata, flow);
 
         /* Restore stack, if any. */
         if (state->stack) {
@@ -7571,14 +7597,10 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             ctx.error = XLATE_INVALID_TUNNEL_METADATA;
             goto exit;
         }
-    } else if (!flow->tunnel.metadata.tab || xin->frozen_state) {
+    } else if (!flow->tunnel.metadata.tab) {
         /* If the original flow did not come in on a tunnel, then it won't have
          * FLOW_TNL_F_UDPIF set. However, we still need to have a metadata
          * table in case we generate tunnel actions. */
-        /* If the translation is from a frozen state, we use the latest
-         * TLV map to avoid segmentation fault in case the old TLV map is
-         * replaced by a new one.
-         * XXX: It is better to abort translation if the table is changed. */
         flow->tunnel.metadata.tab = ofproto_get_tun_tab(
             &ctx.xbridge->ofproto->up);
     }

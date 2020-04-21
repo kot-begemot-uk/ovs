@@ -611,6 +611,16 @@ NS_CHECK_EXEC([at_ns0], [ping -q -c 3 10.1.1.100 | FORMAT_PING], [0], [dnl
 3 packets transmitted, 3 received, 0% packet loss, time 0ms
 ])
 
+dnl Test OVS handles TLV map modifictions properly when restores frozen state.
+NS_CHECK_EXEC([at_ns0], [ping 10.1.1.100 > /dev/null &])
+
+AT_CHECK([ovs-ofctl add-tlv-map br0 "{class=0xffff,type=0x88,len=4}->tun_metadata1"])
+sleep 1
+AT_CHECK([ovs-ofctl add-tlv-map br0 "{class=0xffff,type=0x99,len=4}->tun_metadata2"])
+sleep 1
+AT_CHECK([ovs-ofctl add-tlv-map br0 "{class=0xffff,type=0xaa,len=4}->tun_metadata3"])
+sleep 1
+
 OVS_APP_EXIT_AND_WAIT([ovs-ofctl])
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
@@ -2285,6 +2295,47 @@ NS_CHECK_EXEC([at_ns0], [wget 10.1.1.2 -t 3 -T 1 --retry-connrefused -v -o wget0
 AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(10.1.1.2)], [0], [dnl
 tcp,orig=(src=10.1.1.1,dst=10.1.1.2,sport=<cleared>,dport=<cleared>),reply=(src=10.1.1.2,dst=10.1.1.1,sport=<cleared>,dport=<cleared>),zone=1,mark=3,labels=0x200000001,protoinfo=(state=<cleared>)
 tcp,orig=(src=10.1.1.1,dst=10.1.1.2,sport=<cleared>,dport=<cleared>),reply=(src=10.1.1.2,dst=10.1.1.1,sport=<cleared>,dport=<cleared>),zone=2,protoinfo=(state=<cleared>)
+])
+
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([conntrack - new connections])
+CHECK_CONNTRACK()
+OVS_TRAFFIC_VSWITCHD_START()
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24")
+
+AT_DATA([flows1.txt], [dnl
+table=0, priority=1,action=drop
+table=0, priority=10,arp,action=normal
+table=0, priority=100,tcp,action=ct(table=1)
+table=0, priority=100,udp,action=ct(table=1)
+table=1, priority=100,in_port=1,tcp,ct_state=+trk+new,action=ct(commit)
+table=1, priority=100,in_port=1,udp,ct_state=+trk+new,action=ct(commit)
+table=1, priority=100,in_port=1,ct_state=+trk+est,action=2
+table=1, priority=100,in_port=2,ct_state=+trk+est,action=1
+])
+
+ovs-appctl vlog/set dbg
+
+AT_CHECK([ovs-ofctl --bundle add-flows br0 flows1.txt])
+
+dnl TCP traffic from ns0 to ns1 should fail.
+OVS_START_L7([at_ns1], [http])
+NS_CHECK_EXEC([at_ns0], [wget 10.1.1.2 -t 3 -T 1 --retry-connrefused -v -o wget0.log], [4])
+
+dnl Send UDP packet on port 1 twice.
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 "in_port=1 packet=50540000000a50540000000908004500001c000000000011a4cd0a0101010a0101020001000200080000 actions=resubmit(,0)"])
+AT_CHECK([ovs-ofctl -O OpenFlow13 packet-out br0 "in_port=1 packet=50540000000a50540000000908004500001c000000000011a4cd0a0101010a0101020001000200080000 actions=resubmit(,0)"])
+
+dnl There should not be any packet that matches the established ct_state.
+AT_CHECK([ovs-ofctl dump-flows br0 "table=1 in_port=1,ct_state=+trk+est" | ofctl_strip], [0], [dnl
+NXST_FLOW reply:
+ table=1, priority=100,ct_state=+est+trk,in_port=1 actions=output:2
 ])
 
 OVS_TRAFFIC_VSWITCHD_STOP
