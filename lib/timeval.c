@@ -323,7 +323,11 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         }
 
 #ifndef _WIN32
-        retval = poll(pollfds, n_pollfds, time_left);
+        if (time_left) {
+            retval = poll(pollfds, n_pollfds, time_left);
+        } else {
+            retval = 0;
+        }
         if (retval < 0) {
             retval = -errno;
         }
