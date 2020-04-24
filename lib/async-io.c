@@ -104,12 +104,8 @@ static void *default_async_io_helper(void *arg) {
                 if (byteq_headroom(&data->input) != 0) {
                     retval = do_async_recv(data);
                 } else {
-                    poll_timer_wait(1);
                     retval = 0;
                 }
-            }
-            if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
-                stream_recv_wait(data->stream);
             }
             atomic_read_relaxed(&data->backlog, &oldbacklog);
             if (not_in_error(data)) {
@@ -117,6 +113,11 @@ static void *default_async_io_helper(void *arg) {
                 do_stream_flush(data);
             }
             atomic_read_relaxed(&data->backlog, &backlog);
+            if (not_in_error(data)) {
+                if (retval > 0 || retval == -EAGAIN) {
+                    stream_recv_wait(data->stream);
+                }
+            }
             if (not_in_error(data)) {
                 if (backlog) {
                     /* upper layers will refuse to process rx
@@ -133,6 +134,9 @@ static void *default_async_io_helper(void *arg) {
                      */
                     if (!byteq_is_empty(&data->input) || oldbacklog) {
                         latch_set(&data->rx_notify);
+                        if (byteq_is_full(&data->input)) {
+                            poll_timer_wait(1);
+                        }
                     }
                 }
             }
@@ -223,7 +227,9 @@ async_init_data(struct async_data *data, struct stream *stream)
     struct async_io_control *target_control;
     unsigned int buffer_size;
 
+
     data->stream = stream;
+    data->async_mode = allow_async_io;
 #ifdef __linux__
     buffer_size = getpagesize();
     if (!is_pow2(buffer_size)) {
@@ -232,6 +238,9 @@ async_init_data(struct async_data *data, struct stream *stream)
 #else
     buffer_size = ASYNC_BUFFER_SIZE;
 #endif
+    if (data->async_mode) {
+        buffer_size = 4 * buffer_size;
+    } 
 #if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600)
     /* try to allocate a buffer_size as aligned, that by default is one page
      * if that fails, fall back to normal memory allocation.
@@ -251,7 +260,6 @@ async_init_data(struct async_data *data, struct stream *stream)
     data->active = ATOMIC_VAR_INIT(false);
     data->backlog = ATOMIC_VAR_INIT(0);
     ovs_mutex_init(&data->mutex);
-    data->async_mode = allow_async_io;
     data->valid = true;
     if (data->async_mode) {
         if (!io_pool) {

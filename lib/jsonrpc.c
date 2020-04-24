@@ -75,6 +75,7 @@ jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
     return pstream_open_with_default_port(name, OVSDB_PORT, pstreamp, dscp);
 }
 
+
 /* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
  * new jsonrpc object takes ownership of 'stream'. */
 struct jsonrpc *
@@ -280,7 +281,6 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 
     for (i = 0; i < 50; i++) {
         size_t n, used;
-        bool needs_kick = (byteq_avail(async_get_input(adata(rpc))) == 0);
 
         /* Fill our input buffer if it's empty. */
         retval = async_stream_recv(adata(rpc));
@@ -309,8 +309,8 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         used = json_parser_feed(rpc->parser,
                         (char *) byteq_tail(async_get_input(adata(rpc))), n);
         byteq_advance_tail(async_get_input(adata(rpc)), used);
-        if (needs_kick) {
-            async_io_kick(adata(rpc));
+        if (used && (byteq_used(async_get_input(adata(rpc))) == 0)) {
+           async_io_kick(adata(rpc));
         }
 
         /* If we have complete JSON, attempt to parse it as JSON-RPC. */
