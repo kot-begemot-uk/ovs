@@ -906,7 +906,11 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
 
 const struct stream_class ssl_stream_class = {
     "ssl",                      /* name */
-    true,                       /* needs_probes */
+#ifdef __linux__
+    false,                      /* linux implements them at TCP level */
+#else
+    true,                       /* needs probes */
+#endif
     ssl_open,                   /* open */
     ssl_close,                  /* close */
     ssl_connect,                /* connect */

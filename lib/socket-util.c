@@ -106,12 +106,44 @@ setsockopt_tcp_nodelay(int fd)
 {
     int on = 1;
     int retval;
+#ifdef __linux__
+    int value;
+#endif
 
     retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
     if (retval) {
         retval = sock_errno();
         VLOG_ERR("setsockopt(TCP_NODELAY): %s", sock_strerror(retval));
     }
+#ifdef __linux__
+   on = 1;
+   retval = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on);
+   if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(SO_KEEPALIVE): %s", sock_strerror(retval));
+        return;
+   }
+   value = 2;
+   retval = setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &value, sizeof value);
+   if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(TCP_KEEPCNT): %s", sock_strerror(retval));
+        return;
+   }
+   value = 5;
+   retval = setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &value, sizeof value);
+   if (retval) { 
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(TCP_KEEPIDLE): %s", sock_strerror(retval));
+        return;
+   }
+   value = 5;
+   retval = setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &value, sizeof value);
+   if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(SO_KEEPALIVE): %s", sock_strerror(retval));
+   }
+#endif
 }
 
 /* Sets the DSCP value of socket 'fd' to 'dscp', which must be 63 or less.
