@@ -118,7 +118,7 @@ Q: Are all features available with all datapaths?
     ========================== ============== ============== ========= =======
     Connection tracking             4.3            2.5          2.6      YES
     Conntrack Fragment Reass.       4.3            2.6          2.12     YES
-    Conntrack Timeout Policies      5.2            2.12         NO       NO
+    Conntrack Timeout Policies      5.2            2.12         2.14     NO
     Conntrack Zone Limit            4.18           2.10         2.13     YES
     Conntrack NAT                   4.6            2.6          2.8      YES
     Tunnel - LISP                   NO             2.11         NO       NO
@@ -131,7 +131,7 @@ Q: Are all features available with all datapaths?
     Tunnel - Geneve-IPv6            4.4            2.6          2.6      NO
     Tunnel - ERSPAN                 4.18           2.10         2.10     NO
     Tunnel - ERSPAN-IPv6            4.18           2.10         2.10     NO
-    Tunnel - GTP-U                  NO             NO           2.13     NO
+    Tunnel - GTP-U                  NO             NO           2.14     NO
     QoS - Policing                  YES            1.1          2.6      NO
     QoS - Shaping                   YES            1.1          NO       NO
     sFlow                           YES            1.0          1.0      NO
@@ -140,6 +140,7 @@ Q: Are all features available with all datapaths?
     NIC Bonding                     YES            1.0          1.0      YES
     Multiple VTEPs                  YES            1.10         1.10     YES
     Meter action                    4.15           2.10         2.7      NO
+    check_pkt_len action            5.2            2.12         2.12     NO
     ========================== ============== ============== ========= =======
 
     Do note, however:
