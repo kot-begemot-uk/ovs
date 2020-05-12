@@ -153,6 +153,12 @@ struct stream_class {
      * The flush function must not block.  If buffers cannot be flushed
      * completely it should return "partial success" immediately. */
     bool (*flush)(struct stream *stream, int *retval);
+    /* Sets low level keepalives if supported
+     *
+     *     - If successful returns true
+     *
+     */
+    bool (*set_probe_interval)(struct stream *stream, int probe_interval);
 };
 
 /* Passive listener for incoming stream connections.

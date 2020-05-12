@@ -844,6 +844,48 @@ ssl_flush(struct stream *stream, int *retval)
     }
 }
 
+#ifdef __linux__
+static bool ssl_set_probe_interval(struct stream *stream, int probe_interval) {
+    int on = 1;
+    int retval;
+    int value;
+    struct ssl_stream *sslv = ssl_stream_cast(stream);
+
+    on = 1;
+    retval = setsockopt(sslv->fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(SO_KEEPALIVE): %s", sock_strerror(retval));
+        return false;
+    }
+    value = 2;
+    retval = setsockopt(sslv->fd,
+            IPPROTO_TCP, TCP_KEEPCNT, &value, sizeof value);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(TCP_KEEPCNT): %s", sock_strerror(retval));
+        return false;
+    }
+    value = probe_interval;
+    retval = setsockopt(sslv->fd,
+            IPPROTO_TCP, TCP_KEEPIDLE, &value, sizeof value);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(TCP_KEEPIDLE): %s", sock_strerror(retval));
+        return false;
+    }
+    value = probe_interval;
+    retval = setsockopt(sslv->fd,
+            IPPROTO_TCP, TCP_KEEPINTVL, &value, sizeof value);
+    if (retval) {
+        retval = sock_errno();
+        VLOG_ERR("setsockopt(SO_KEEPALIVE): %s", sock_strerror(retval));
+        return false;
+    }
+    return true;
+}
+#endif
+
 static void
 ssl_run_wait(struct stream *stream)
 {
@@ -917,6 +959,12 @@ const struct stream_class ssl_stream_class = {
     ssl_wait,                   /* wait */
     ssl_enqueue,                /* send_buf */
     ssl_flush,
+#ifdef __linux__
+    ssl_set_probe_interval,
+#else
+    NULL,
+#endif
+
 };
 
 /* Passive SSL. */

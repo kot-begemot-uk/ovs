@@ -376,6 +376,7 @@ const struct stream_class windows_stream_class = {
     windows_wait,               /* wait */
     NULL,                       /* enqueue */
     NULL,                       /* flush */
+    NULL,                       /* set probes */
 };
 
 struct pwindows_pstream
