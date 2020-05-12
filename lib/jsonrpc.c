@@ -815,7 +815,7 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     s->seqno = 0;
     s->dscp = 0;
     s->last_error = 0;
-    s->probe_interval = 5;
+    s->probe_interval = 0;
 
     const char *name = reconnect_get_name(s->reconnect);
     if (!pstream_verify_name(name)) {
@@ -827,7 +827,8 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
 
     if (!stream_or_pstream_needs_probes(name)) {
         reconnect_set_probe_interval(s->reconnect, 0);
-        s->probe_interval = 0;
+    } else {
+        s->probe_interval = reconnect_get_probe_interval(s->reconnect);
     }
 
     return s;
@@ -912,10 +913,7 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
         error = jsonrpc_stream_open(name, &s->stream, s->dscp);
         if (!error) {
             reconnect_connecting(s->reconnect, time_msec());
-            if (stream_set_probe_interval(s->stream, s->probe_interval)) {
-                /* we have delegated keep-alives to the kernel */
-                reconnect_set_probe_interval(s->reconnect, 0);
-            } else {
+            if (!stream_set_probe_interval(s->stream, s->probe_interval)) {
                 reconnect_set_probe_interval(s->reconnect, s->probe_interval);
             }
         } else {
@@ -1218,6 +1216,10 @@ jsonrpc_session_set_probe_interval(struct jsonrpc_session *s,
                                    int probe_interval)
 {
     s->probe_interval = probe_interval;
+    if (s->stream) {
+        stream_set_probe_interval(s->stream, probe_interval);
+    }
+
 }
 
 /* Sets the DSCP value used for 's''s connection to 'dscp'.  If this is

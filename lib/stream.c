@@ -432,9 +432,10 @@ stream_wait(struct stream *stream, enum stream_wait_type wait)
 
 
 bool stream_set_probe_interval(struct stream *stream, int probe_interval) {
-    if (stream->class->set_probe_interval) {
+    if (probe_interval && stream->class->set_probe_interval) {
         return (stream->class->set_probe_interval)(stream, probe_interval);
-    }
+    } 
+    return false;
 }
 
 void
