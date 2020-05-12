@@ -430,6 +430,18 @@ stream_wait(struct stream *stream, enum stream_wait_type wait)
     (stream->class->wait)(stream, wait);
 }
 
+
+bool stream_set_probe_interval(struct stream *stream, int probe_interval) {
+    if (! stream->class->needs_probes) {
+        return true;
+    }
+    if (probe_interval && stream->class->set_probe_interval) {
+        return (stream->class->set_probe_interval)(
+                stream, probe_interval / 1000);
+    }
+    return false;
+}
+
 void
 stream_connect_wait(struct stream *stream)
 {
@@ -509,9 +521,9 @@ stream_or_pstream_needs_probes(const char *name)
     const struct stream_class *class;
 
     if (!stream_lookup_class(name, &class)) {
-        return class->needs_probes;
+        return class->needs_probes ? 1 : 0;
     } else if (!pstream_lookup_class(name, &pclass)) {
-        return pclass->needs_probes;
+        return pclass->needs_probes ? 1 : 0;
     } else {
         return -1;
     }

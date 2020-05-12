@@ -255,6 +255,7 @@ static const struct stream_class stream_fd_class = {
     fd_wait,                    /* wait */
     fd_enqueue,                 /* enqueue */
     fd_flush,                   /* flush */
+    NULL                        /* set probes */
 };
 
 /* Passive file descriptor stream. */
