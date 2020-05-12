@@ -38,16 +38,16 @@ byteq_init(struct byteq *q, uint8_t *buffer, size_t size)
 
 /* Returns the number of bytes current queued in 'q'. */
 int
-byteq_used(const struct byteq *q)
+byteq_used(struct byteq *q)
 {
-    int retval;
+    atomic_int retval;
     atomic_read_relaxed(&q->used, &retval);
     return retval;
 }
 
 /* Returns the number of bytes that can be added to 'q' without overflow. */
 int
-byteq_avail(const struct byteq *q)
+byteq_avail(struct byteq *q)
 {
     return q->size - byteq_used(q);
 }
@@ -55,7 +55,7 @@ byteq_avail(const struct byteq *q)
 /* Returns true if no bytes are queued in 'q',
  * false if at least one byte is queued.  */
 bool
-byteq_is_empty(const struct byteq *q)
+byteq_is_empty(struct byteq *q)
 {
     return !byteq_used(q);
 }
@@ -63,7 +63,7 @@ byteq_is_empty(const struct byteq *q)
 /* Returns true if 'q' has no room to queue additional bytes,
  * false if 'q' has room for at least one more byte.  */
 bool
-byteq_is_full(const struct byteq *q)
+byteq_is_full(struct byteq *q)
 {
     return !byteq_avail(q);
 }
@@ -158,7 +158,7 @@ byteq_read(struct byteq *q, int fd)
 /* Returns the number of contiguous bytes of in-use space starting at the tail
  * of 'q'. */
 int
-byteq_tailroom(const struct byteq *q)
+byteq_tailroom(struct byteq *q)
 {
     int used = byteq_used(q);
     int tail_to_end = q->size - (q->tail & (q->size - 1));
@@ -195,7 +195,7 @@ byteq_head(struct byteq *q)
 /* Returns the number of contiguous bytes of free space starting at the head
  * of 'q'. */
 int
-byteq_headroom(const struct byteq *q)
+byteq_headroom(struct byteq *q)
 {
     int avail = byteq_avail(q);
     int head_to_end = q->size - (q->head & (q->size - 1));
