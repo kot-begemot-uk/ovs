@@ -815,7 +815,7 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     s->seqno = 0;
     s->dscp = 0;
     s->last_error = 0;
-    s->probe_interval = 0;
+    s->probe_interval = reconnect_get_probe_interval(s->reconnect);
 
     const char *name = reconnect_get_name(s->reconnect);
     if (!pstream_verify_name(name)) {
@@ -826,9 +826,9 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     }
 
     if (!stream_or_pstream_needs_probes(name)) {
+        VLOG_DBG("Probes OFF");
         reconnect_set_probe_interval(s->reconnect, 0);
-    } else {
-        s->probe_interval = reconnect_get_probe_interval(s->reconnect);
+        s->probe_interval = 0;
     }
 
     return s;
@@ -843,12 +843,14 @@ struct jsonrpc_session *
 jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
 {
     struct jsonrpc_session *s;
+    struct async_data *sdata = adata(jsonrpc);
 
     s = xmalloc(sizeof *s);
     svec_init(&s->remotes);
     svec_add(&s->remotes, jsonrpc_get_name(jsonrpc));
     s->next_remote = 0;
     s->reconnect = reconnect_create(time_msec());
+
     reconnect_set_quiet(s->reconnect, true);
     reconnect_set_name(s->reconnect, jsonrpc_get_name(jsonrpc));
     reconnect_set_max_tries(s->reconnect, 0);
@@ -858,6 +860,13 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->stream = NULL;
     s->pstream = NULL;
     s->seqno = 1;
+    s->probe_interval = reconnect_get_probe_interval(s->reconnect);
+
+    if (jsonrpc && sdata->stream && (!sdata->stream->class->needs_probes)) {
+        VLOG_DBG("Turn off probes");
+        reconnect_set_probe_interval(s->reconnect, 0);
+        s->probe_interval = 0;
+    } 
 
     return s;
 }
@@ -1014,6 +1023,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         break;
 
     case RECONNECT_PROBE:
+        VLOG_INFO("RECONNECT PROBE %d %d",s->probe_interval, reconnect_get_probe_interval(s->reconnect));
         if (s->rpc) {
             struct json *params;
             struct jsonrpc_msg *request;
@@ -1216,10 +1226,11 @@ jsonrpc_session_set_probe_interval(struct jsonrpc_session *s,
                                    int probe_interval)
 {
     s->probe_interval = probe_interval;
-    if (s->stream) {
-        stream_set_probe_interval(s->stream, probe_interval);
+    if (s->stream && s->probe_interval) {
+        if (!stream_set_probe_interval(s->stream, probe_interval)) {
+           reconnect_set_probe_interval(s->reconnect, probe_interval);
+        }
     }
-
 }
 
 /* Sets the DSCP value used for 's''s connection to 'dscp'.  If this is
