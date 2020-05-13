@@ -825,8 +825,7 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
         reconnect_set_backoff(s->reconnect, INT_MAX, INT_MAX);
     }
 
-    if (!stream_or_pstream_needs_probes(name)) {
-        VLOG_DBG("Probes OFF");
+    if (stream_or_pstream_needs_probes(name) < 1) {
         reconnect_set_probe_interval(s->reconnect, 0);
         s->probe_interval = 0;
     }
@@ -1023,7 +1022,6 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         break;
 
     case RECONNECT_PROBE:
-        VLOG_INFO("RECONNECT PROBE %d %d",s->probe_interval, reconnect_get_probe_interval(s->reconnect));
         if (s->rpc) {
             struct json *params;
             struct jsonrpc_msg *request;

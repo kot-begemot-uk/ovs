@@ -433,7 +433,6 @@ stream_wait(struct stream *stream, enum stream_wait_type wait)
 
 bool stream_set_probe_interval(struct stream *stream, int probe_interval) {
     if (probe_interval && stream->class->set_probe_interval) {
-        VLOG_DBG("Setting probe interval at low level %d", probe_interval / 1000);
         return (stream->class->set_probe_interval)(stream, probe_interval / 1000);
     } 
     return false;
@@ -518,9 +517,9 @@ stream_or_pstream_needs_probes(const char *name)
     const struct stream_class *class;
 
     if (!stream_lookup_class(name, &class)) {
-        return class->needs_probes;
+        return class->needs_probes ? 1 : 0;
     } else if (!pstream_lookup_class(name, &pclass)) {
-        return pclass->needs_probes;
+        return pclass->needs_probes ? 1 : 0;
     } else {
         return -1;
     }
