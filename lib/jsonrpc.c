@@ -862,7 +862,6 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->probe_interval = reconnect_get_probe_interval(s->reconnect);
 
     if (jsonrpc && sdata->stream && (!sdata->stream->class->needs_probes)) {
-        VLOG_DBG("Turn off probes");
         reconnect_set_probe_interval(s->reconnect, 0);
         s->probe_interval = 0;
     } 
@@ -957,6 +956,11 @@ jsonrpc_session_run(struct jsonrpc_session *s)
                 jsonrpc_session_disconnect(s);
             }
             reconnect_connected(s->reconnect, time_msec());
+            if (stream_set_probe_interval(stream, s->probe_interval)) {
+                reconnect_set_probe_interval(s->reconnect, 0);
+            } else {
+                reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            }
             s->rpc = jsonrpc_open(stream);
             s->seqno++;
         } else if (error != EAGAIN) {
@@ -1000,6 +1004,11 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         if (!error) {
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(s->stream);
+            if (stream_set_probe_interval(s->stream, s->probe_interval)) {
+                reconnect_set_probe_interval(s->reconnect, 0);
+            } else {
+                reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            }
             s->stream = NULL;
             s->seqno++;
         } else if (error != EAGAIN) {
