@@ -826,6 +826,7 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     }
 
     if (stream_or_pstream_needs_probes(name) < 1) {
+        VLOG_DBG("stream %s does not need probes, turning off", name);
         reconnect_set_probe_interval(s->reconnect, 0);
         s->probe_interval = 0;
     }
@@ -842,7 +843,6 @@ struct jsonrpc_session *
 jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
 {
     struct jsonrpc_session *s;
-    struct async_data *sdata = adata(jsonrpc);
 
     s = xmalloc(sizeof *s);
     svec_init(&s->remotes);
@@ -861,7 +861,8 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->seqno = 1;
     s->probe_interval = reconnect_get_probe_interval(s->reconnect);
 
-    if (jsonrpc && sdata->stream && (!sdata->stream->class->needs_probes)) {
+    if (stream_or_pstream_needs_probes(reconnect_get_name(s->reconnect)) < 1) {
+        VLOG_DBG("stream %s does not need probes, turning off", reconnect_get_name(s->reconnect));
         reconnect_set_probe_interval(s->reconnect, 0);
         s->probe_interval = 0;
     } 
@@ -921,7 +922,11 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
         if (!error) {
             reconnect_connecting(s->reconnect, time_msec());
             if (!stream_set_probe_interval(s->stream, s->probe_interval)) {
+                VLOG_DBG("connect, setting probing on %s to %d", reconnect_get_name(s->reconnect), s->probe_interval);
                 reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            } else {
+                /* we have delegated probing to the stream layer */
+                reconnect_set_probe_interval(s->reconnect, 0);
             }
         } else {
             s->last_error = error;
@@ -959,6 +964,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             if (stream_set_probe_interval(stream, s->probe_interval)) {
                 reconnect_set_probe_interval(s->reconnect, 0);
             } else {
+                VLOG_DBG("connect, setting probing on %s to %d", reconnect_get_name(s->reconnect), s->probe_interval);
                 reconnect_set_probe_interval(s->reconnect, s->probe_interval);
             }
             s->rpc = jsonrpc_open(stream);
@@ -1007,6 +1013,7 @@ jsonrpc_session_run(struct jsonrpc_session *s)
             if (stream_set_probe_interval(s->stream, s->probe_interval)) {
                 reconnect_set_probe_interval(s->reconnect, 0);
             } else {
+                VLOG_DBG("connect, setting probing on %s to %d", reconnect_get_name(s->reconnect), s->probe_interval);
                 reconnect_set_probe_interval(s->reconnect, s->probe_interval);
             }
             s->stream = NULL;
@@ -1034,7 +1041,9 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         if (s->rpc) {
             struct json *params;
             struct jsonrpc_msg *request;
-
+            if (s->probe_interval == 0) {
+                VLOG_ERR("reconnect, probe asked for on %s interval %d while probing off", reconnect_get_name(s->reconnect), s->probe_interval);
+            }
             params = json_array_create_empty();
             request = jsonrpc_create_request("echo", params, NULL);
             json_destroy(request->id);
