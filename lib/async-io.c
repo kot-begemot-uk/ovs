@@ -124,16 +124,9 @@ static void *default_async_io_helper(void *arg) {
                      * notifying them
                      */
                     stream_send_wait(data->stream);
-                } else {
-                    /* There is no backlog, so the rpc layer will
-                     * actually pay attention to our notifications
-                     * We issue a notification for both pending
-                     * input and what is the equivalent of
-                     * "IO Completion"
-                     */
-                    if (!byteq_is_empty(&data->input) || oldbacklog) {
+                }
+                if (!byteq_is_empty(&data->input) || oldbacklog) {
                         latch_set(&data->rx_notify);
-                    }
                 }
             }
             if (data->valid && in_error(data)) {
