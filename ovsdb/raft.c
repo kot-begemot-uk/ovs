@@ -36,6 +36,7 @@
 #include "ovsdb/log.h"
 #include "raft-rpc.h"
 #include "random.h"
+#include "simap.h"
 #include "socket-util.h"
 #include "stream.h"
 #include "timeval.h"
@@ -938,6 +939,7 @@ raft_add_conn(struct raft *raft, struct jsonrpc_session *js,
                                               &conn->sid);
     conn->incoming = incoming;
     conn->js_seqno = jsonrpc_session_get_seqno(conn->js);
+    jsonrpc_session_set_probe_interval(js, 0);
 }
 
 /* Starts the local server in an existing Raft cluster, using the local copy of
@@ -1011,6 +1013,21 @@ const struct uuid *
 raft_get_sid(const struct raft *raft)
 {
     return &raft->sid;
+}
+
+/* Adds memory consumption info to 'usage' for later use by memory_report(). */
+void
+raft_get_memory_usage(const struct raft *raft, struct simap *usage)
+{
+    struct raft_conn *conn;
+    int cnt = 0;
+
+    LIST_FOR_EACH (conn, list_node, &raft->conns) {
+        simap_increase(usage, "raft-backlog",
+                       jsonrpc_session_get_backlog(conn->js));
+        cnt++;
+    }
+    simap_increase(usage, "raft-connections", cnt);
 }
 
 /* Returns true if 'raft' has completed joining its cluster, has not left or
