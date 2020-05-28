@@ -40,6 +40,7 @@ const char *stream_get_name(const struct stream *);
 int stream_connect(struct stream *);
 int stream_recv(struct stream *, void *buffer, size_t n);
 int stream_send(struct stream *, const void *buffer, size_t n);
+bool stream_set_probe_interval(struct stream *, int probe_interval);
 
 void stream_run(struct stream *);
 void stream_run_wait(struct stream *);
