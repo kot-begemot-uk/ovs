@@ -430,6 +430,19 @@ stream_wait(struct stream *stream, enum stream_wait_type wait)
     (stream->class->wait)(stream, wait);
 }
 
+
+bool stream_set_probe_interval(struct stream *stream, int probe_interval) {
+    if (! stream->class->needs_probes) {
+        return true;
+    }
+    if (probe_interval && stream->class->set_probe_interval) {
+        return (stream->class->set_probe_interval)(
+                stream, probe_interval / 1000);
+    }
+    return false;
+}
+
+
 void
 stream_connect_wait(struct stream *stream)
 {
@@ -498,11 +511,13 @@ pstream_verify_name(const char *name)
     return pstream_lookup_class(name, &class);
 }
 
-/* Returns 1 if the stream or pstream specified by 'name' needs periodic probes
+/* Returns true if the stream or pstream specified by 'name' needs periodic probes
  * to verify connectivity.  For [p]streams which need probes, it can take a
- * long time to notice the connection has been dropped.  Returns 0 if the
- * stream or pstream does not need probes, and -1 if 'name' is not valid. */
-int
+ * long time to notice the connection has been dropped.  Returns false if the
+ * stream or pstream does not need probes as well as when the name cannot
+ * be matched. */
+
+bool
 stream_or_pstream_needs_probes(const char *name)
 {
     const struct pstream_class *pclass;
@@ -512,9 +527,8 @@ stream_or_pstream_needs_probes(const char *name)
         return class->needs_probes;
     } else if (!pstream_lookup_class(name, &pclass)) {
         return pclass->needs_probes;
-    } else {
-        return -1;
     }
+    return false;
 }
 
 /* Attempts to start listening for remote stream connections.  'name' is a

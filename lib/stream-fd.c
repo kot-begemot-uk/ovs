@@ -185,6 +185,14 @@ fd_wait(struct stream *stream, enum stream_wait_type wait)
     }
 }
 
+static bool fd_set_probe_interval(struct stream *stream, int probe_interval) {
+    struct stream_fd *sf = stream_fd_cast(stream);
+
+    return tcp_set_probe_interval(sf->fd, probe_interval);
+}
+
+
+
 static const struct stream_class stream_fd_class = {
     "fd",                       /* name */
     false,                      /* needs_probes */
@@ -196,6 +204,7 @@ static const struct stream_class stream_fd_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     fd_wait,                    /* wait */
+    fd_set_probe_interval,      /* set_probe_interval */
 };
 
 /* Passive file descriptor stream. */
