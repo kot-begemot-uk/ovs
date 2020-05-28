@@ -27,6 +27,7 @@
 #include "openvswitch/types.h"
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
+#include <netinet/tcp.h>
 
 struct ds;
 
@@ -180,5 +181,12 @@ static inline int sock_errno(void)
     return errno;
 #endif
 }
+
+#if defined (SO_KEEPALIVE) && defined (TCP_KEEPCNT) && \
+    defined (TCP_KEEPIDLE) && defined (TCP_KEEPINTVL)
+#define HAS_KERNEL_KEEPALIVES 1
+#endif
+
+bool tcp_set_probe_interval(int fd, int probe_interval);
 
 #endif /* socket-util.h */
