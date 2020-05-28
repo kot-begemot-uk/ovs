@@ -40,6 +40,7 @@ const char *stream_get_name(const struct stream *);
 int stream_connect(struct stream *);
 int stream_recv(struct stream *, void *buffer, size_t n);
 int stream_send(struct stream *, const void *buffer, size_t n);
+bool stream_set_probe_interval(struct stream *, int probe_interval);
 
 void stream_run(struct stream *);
 void stream_run_wait(struct stream *);
@@ -80,7 +81,7 @@ int pstream_open_with_default_port(const char *name,
 bool stream_parse_target_with_default_port(const char *target,
                                            int default_port,
                                            struct sockaddr_storage *ss);
-int stream_or_pstream_needs_probes(const char *name);
+bool stream_or_pstream_needs_probes(const char *name);
 
 /* Error reporting. */
 
