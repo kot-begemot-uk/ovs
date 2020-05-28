@@ -787,6 +787,7 @@ struct jsonrpc_session {
     int last_error;
     unsigned int seqno;
     uint8_t dscp;
+    int probe_interval;
 };
 
 static void
@@ -839,6 +840,7 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
     s->seqno = 0;
     s->dscp = 0;
     s->last_error = 0;
+    s->probe_interval = reconnect_get_probe_interval(s->reconnect);
 
     const char *name = reconnect_get_name(s->reconnect);
     if (!pstream_verify_name(name)) {
@@ -848,8 +850,9 @@ jsonrpc_session_open_multiple(const struct svec *remotes, bool retry)
         reconnect_set_backoff(s->reconnect, INT_MAX, INT_MAX);
     }
 
-    if (!stream_or_pstream_needs_probes(name)) {
+    if (stream_or_pstream_needs_probes(name) < 1) {
         reconnect_set_probe_interval(s->reconnect, 0);
+        s->probe_interval = 0;
     }
 
     return s;
@@ -879,6 +882,12 @@ jsonrpc_session_open_unreliably(struct jsonrpc *jsonrpc, uint8_t dscp)
     s->stream = NULL;
     s->pstream = NULL;
     s->seqno = 1;
+    s->probe_interval = reconnect_get_probe_interval(s->reconnect);
+
+    if (stream_or_pstream_needs_probes(reconnect_get_name(s->reconnect)) < 1) {
+        reconnect_set_probe_interval(s->reconnect, 0);
+        s->probe_interval = 0;
+    }
 
     return s;
 }
@@ -934,6 +943,12 @@ jsonrpc_session_connect(struct jsonrpc_session *s)
         error = jsonrpc_stream_open(name, &s->stream, s->dscp);
         if (!error) {
             reconnect_connecting(s->reconnect, time_msec());
+            if (stream_set_probe_interval(s->stream, s->probe_interval)) {
+                /* we have delegated probing to the stream layer */
+                reconnect_set_probe_interval(s->reconnect, 0);
+            } else {
+                reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            }
         } else {
             s->last_error = error;
         }
@@ -967,6 +982,12 @@ jsonrpc_session_run(struct jsonrpc_session *s)
                 jsonrpc_session_disconnect(s);
             }
             reconnect_connected(s->reconnect, time_msec());
+            if (stream_set_probe_interval(stream, s->probe_interval)) {
+                /* we have delegated probing to the stream layer */
+                reconnect_set_probe_interval(s->reconnect, 0);
+            } else {
+                reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            }
             s->rpc = jsonrpc_open(stream);
             s->seqno++;
         } else if (error != EAGAIN) {
@@ -1008,6 +1029,12 @@ jsonrpc_session_run(struct jsonrpc_session *s)
         if (!error) {
             reconnect_connected(s->reconnect, time_msec());
             s->rpc = jsonrpc_open(s->stream);
+            if (stream_set_probe_interval(s->stream, s->probe_interval)) {
+                /* we have delegated probing to the stream layer */
+                reconnect_set_probe_interval(s->reconnect, 0);
+            } else {
+                reconnect_set_probe_interval(s->reconnect, s->probe_interval);
+            }
             s->stream = NULL;
             s->seqno++;
         } else if (error != EAGAIN) {
@@ -1231,7 +1258,12 @@ void
 jsonrpc_session_set_probe_interval(struct jsonrpc_session *s,
                                    int probe_interval)
 {
-    reconnect_set_probe_interval(s->reconnect, probe_interval);
+    s->probe_interval = probe_interval;
+    if (s->stream && s->probe_interval) {
+        if (!stream_set_probe_interval(s->stream, probe_interval)) {
+           reconnect_set_probe_interval(s->reconnect, probe_interval);
+        }
+    }
 }
 
 /* Sets the DSCP value used for 's''s connection to 'dscp'.  If this is

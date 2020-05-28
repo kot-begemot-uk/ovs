@@ -789,6 +789,13 @@ ssl_run(struct stream *stream)
     }
 }
 
+static bool ssl_set_probe_interval(struct stream *stream, int probe_interval) {
+    struct ssl_stream *sslv = ssl_stream_cast(stream);
+
+    return tcp_set_probe_interval(sslv->fd, probe_interval);
+}
+
+
 static void
 ssl_run_wait(struct stream *stream)
 {
@@ -861,6 +868,7 @@ const struct stream_class ssl_stream_class = {
     ssl_run,                    /* run */
     ssl_run_wait,               /* run_wait */
     ssl_wait,                   /* wait */
+    ssl_set_probe_interval,     /* set_probe_interval */
 };
 
 /* Passive SSL. */
