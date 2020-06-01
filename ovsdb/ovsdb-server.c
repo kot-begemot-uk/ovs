@@ -59,6 +59,7 @@
 #include "perf-counter.h"
 #include "ovsdb-util.h"
 #include "openvswitch/vlog.h"
+#include "async-io.h"
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_server);
 
@@ -398,6 +399,7 @@ main(int argc, char *argv[])
     }
 
     daemonize_complete();
+    async_io_enable();
 
     if (!run_command) {
         /* ovsdb-server is usually a long-running process, in which case it

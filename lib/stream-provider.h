@@ -18,9 +18,13 @@
 #define STREAM_PROVIDER_H 1
 
 #include <sys/types.h>
+#include <poll.h>
+#include "openvswitch/list.h"
+#include "openvswitch/ofpbuf.h"
+#include "openvswitch/thread.h"
 #include "stream.h"
-
-/* Active stream connection. */
+#include "byteq.h"
+#include "latch.h"
 
 /* Active stream connection.
  *
@@ -130,6 +134,31 @@ struct stream_class {
      *
      */
     bool (*set_probe_interval)(struct stream *stream, int probe_interval);
+    /* Enqueues an ofpbuf and surrenders its ownership to the
+     * stream
+     *
+     *     - If successful - stream now owns the buffer, returns
+     *     backlog size
+     *
+     *     - On error, negative value, buffer is not claimed by
+     *     the stream.
+     *
+     * The enqueue function must not block.  If no bytes can be immediately
+     * accepted for transmission, it should return -EAGAIN immediately. */
+    int (*enqueue)(struct stream *stream, struct ofpbuf *buf);
+    /* Flushes any stream buffers
+     *
+     *     - If successful returns true and retval contains the backlog size
+     *
+     *     - If partially successful (EAGAIN), returns false and retval is
+     *       a positive backlog size
+     *
+     *     - If unsuccessful, returns false and retval contains a negative
+     *       error value
+     *
+     * The flush function must not block.  If buffers cannot be flushed
+     * completely it should return "partial success" immediately. */
+    bool (*flush)(struct stream *stream, int *retval);
 };
 
 /* Passive listener for incoming stream connections.
@@ -190,6 +219,7 @@ struct pstream_class {
     /* Arranges for the poll loop to wake up when a connection is ready to be
      * accepted on 'pstream'. */
     void (*wait)(struct pstream *pstream);
+
 };
 
 /* Active and passive stream classes. */
