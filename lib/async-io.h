@@ -62,6 +62,8 @@ struct async_io_pool {
     int size;
 };
 
+extern bool kill_async_io;
+
 struct async_io_pool *add_pool(void *(*start)(void *));
 
 long async_stream_enqueue(struct async_data *, struct ofpbuf *buf);

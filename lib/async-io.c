@@ -50,7 +50,7 @@ VLOG_DEFINE_THIS_MODULE(async_io);
 static bool allow_async_io = false;
 
 static bool async_io_setup = false;
-static bool kill_async_io = false;
+bool kill_async_io = false;
 
 static struct ovs_mutex init_mutex = OVS_MUTEX_INITIALIZER;
 
@@ -95,52 +95,55 @@ static void *default_async_io_helper(void *arg) {
         latch_poll(&io_control->async_latch);
         LIST_FOR_EACH (data, list_node, &io_control->work_items) {
             long backlog, oldbacklog;
-            ovs_mutex_lock(&data->mutex);
-            retval = -EAGAIN;
-            if (not_in_error(data)) {
-                /*
-                 * We stop reading if the input queue is full
-                 */
-                if (byteq_headroom(&data->input) != 0) {
-                    retval = do_async_recv(data);
-                } else {
-                    poll_timer_wait(1);
-                    retval = 0;
-                }
-            }
-            if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
-                stream_recv_wait(data->stream);
-            }
-            atomic_read_relaxed(&data->backlog, &oldbacklog);
-            if (not_in_error(data)) {
-                stream_run(data->stream);
-                do_stream_flush(data);
-            }
-            atomic_read_relaxed(&data->backlog, &backlog);
-            if (not_in_error(data)) {
-                if (backlog) {
-                    /* upper layers will refuse to process rx
-                     * until the tx is clear, so no point
-                     * notifying them
+            if (ovs_mutex_trylock(&data->mutex) == 0) {
+                retval = -EAGAIN;
+                if (not_in_error(data)) {
+                    /*
+                     * We stop reading if the input queue is full
                      */
-                    stream_send_wait(data->stream);
+                    if (byteq_headroom(&data->input) != 0) {
+                        retval = do_async_recv(data);
+                    } else {
+                        poll_timer_wait(1);
+                        retval = 0;
+                    }
                 }
-                if (!byteq_is_empty(&data->input) || oldbacklog) {
-                        latch_set(&data->rx_notify);
+                if (not_in_error(data) && (retval > 0 || retval == -EAGAIN)) {
+                    stream_recv_wait(data->stream);
                 }
+                atomic_read_relaxed(&data->backlog, &oldbacklog);
+                if (not_in_error(data)) {
+                    stream_run(data->stream);
+                    do_stream_flush(data);
+                }
+                atomic_read_relaxed(&data->backlog, &backlog);
+                if (not_in_error(data)) {
+                    if (backlog) {
+                        /* upper layers will refuse to process rx
+                         * until the tx is clear, so no point
+                         * notifying them
+                         */
+                        stream_send_wait(data->stream);
+                    }
+                    if (!byteq_is_empty(&data->input) || oldbacklog) {
+                            latch_set(&data->rx_notify);
+                    }
+                }
+                if (data->valid && in_error(data)) {
+                    /* make sure that the other thread(s) notice any errors.
+                     * this should not be an else because errors may have
+                     * changed inside the ifs above.
+                     */
+                    latch_set(&data->rx_notify);
+                    data->valid = false;
+                }
+                if (not_in_error(data)) {
+                    stream_run_wait(data->stream);
+                }
+                ovs_mutex_unlock(&data->mutex);
+            } else {
+                poll_immediate_wake();
             }
-            if (data->valid && in_error(data)) {
-                /* make sure that the other thread(s) notice any errors.
-                 * this should not be an else because errors may have
-                 * changed inside the ifs above.
-                 */
-                latch_set(&data->rx_notify);
-                data->valid = false;
-            }
-            if (not_in_error(data)) {
-                stream_run_wait(data->stream);
-            }
-            ovs_mutex_unlock(&data->mutex);
         }
         ovs_mutex_unlock(&io_control->mutex);
         latch_wait(&io_control->async_latch);
