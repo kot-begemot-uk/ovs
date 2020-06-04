@@ -91,6 +91,8 @@ static void *default_async_io_helper(void *arg) {
     int retval;
 
     do {
+        bool rerun = false;
+
         ovs_mutex_lock(&io_control->mutex);
         latch_poll(&io_control->async_latch);
         LIST_FOR_EACH (data, list_node, &io_control->work_items) {
@@ -142,12 +144,14 @@ static void *default_async_io_helper(void *arg) {
                 }
                 ovs_mutex_unlock(&data->mutex);
             } else {
-                poll_immediate_wake();
+                rerun = true;
             }
         }
         ovs_mutex_unlock(&io_control->mutex);
         latch_wait(&io_control->async_latch);
-        poll_block();
+        if (!rerun) {
+            poll_block();
+        }
     } while (!kill_async_io);
     return arg;
 }
