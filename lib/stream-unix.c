@@ -62,6 +62,11 @@ unix_open(const char *name, char *suffix, struct stream **streamp,
                          AF_UNIX, streamp);
 }
 
+static bool unix_set_probe_interval(struct stream *stream, int probe_interval) {
+
+    return true;
+}
+
 const struct stream_class unix_stream_class = {
     "unix",                     /* name */
     false,                      /* needs_probes */
@@ -73,7 +78,7 @@ const struct stream_class unix_stream_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     NULL,                       /* wait */
-    NULL,
+    unix_set_probe_interval,    /* probe interval */
     NULL,                       /* enqueue */
     NULL,                       /* flush */
 };
