@@ -30,6 +30,7 @@
 #include "stream-provider.h"
 #include "stream.h"
 #include "openvswitch/vlog.h"
+#include "openvswitch/list.h"
 
 VLOG_DEFINE_THIS_MODULE(stream_fd);
 
@@ -41,6 +42,8 @@ struct stream_fd
     int fd;
     int fd_type;
     bool can_read, can_write;
+    struct ovs_list output;
+    int queue_depth;
 };
 
 static const struct stream_class stream_fd_class;
@@ -68,6 +71,8 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
     s->fd = fd;
     s->fd_type = fd_type;
+    s->queue_depth = 0;
+    ovs_list_init(&s->output);
     s->can_read = true;
     s->can_write = true;
     *streamp = &s->stream;
@@ -86,6 +91,7 @@ fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
     closesocket(s->fd);
+    ofpbuf_list_delete(&s->output);
     free(s);
 }
 
@@ -120,6 +126,11 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
         error = sock_errno();
 #ifdef _WIN32
         if (error == WSAEWOULDBLOCK) {
+           error = EAGAIN;
+        }
+#endif
+#ifdef __linux__
+        if (error == ENOBUFS) {
            error = EAGAIN;
         }
 #endif
@@ -193,6 +204,75 @@ static bool fd_set_probe_interval(struct stream *stream, int probe_interval) {
 
 
 
+static int
+fd_enqueue(struct stream *stream, struct ofpbuf *buf)
+{
+    struct stream_fd *sfd = stream_fd_cast(stream);
+    ovs_list_push_back(&sfd->output, &buf->list_node);
+    sfd->queue_depth ++;
+    return buf->size;
+}
+
+static bool
+fd_flush(struct stream *stream, int *retval)
+{
+    struct stream_fd *sfd = stream_fd_cast(stream);
+    int old_q_depth;
+
+    if (sfd->queue_depth == 0) {
+        * retval = -EAGAIN;
+        return true;
+    } else {
+        int sent, i = 0;
+        struct msghdr msg;
+        struct ofpbuf *buf;
+
+        msg.msg_name = NULL;
+        msg.msg_namelen = 0;
+        msg.msg_iov = xmalloc(sizeof(struct iovec) * sfd->queue_depth);
+        msg.msg_iovlen = sfd->queue_depth;
+        msg.msg_control = NULL;
+        msg.msg_controllen = 0;
+        msg.msg_flags = 0;
+
+        LIST_FOR_EACH (buf, list_node, &sfd->output) {
+            msg.msg_iov[i].iov_base = buf->data;
+            msg.msg_iov[i].iov_len = buf->size;
+            i++;
+        }
+
+        sent = sendmsg(sfd->fd, &msg, 0);
+
+        free(msg.msg_iov);
+
+        if (sent > 0) {
+            * retval = sent;
+            old_q_depth = sfd->queue_depth;
+            for (i = 0; i < old_q_depth ; i++) {
+                buf = ofpbuf_from_list(sfd->output.next);
+                if (buf->size > sent) {
+                    ofpbuf_pull(buf, sent);
+                    sent = 0;
+                } else {
+                    sent -= buf->size;
+                    sfd->queue_depth --;
+                    ovs_list_remove(&buf->list_node);
+                    ofpbuf_delete(buf);
+                }
+                if (sent == 0) {
+                    break;
+                }
+            }
+            return true;
+        } else {
+            *retval = -sock_errno();
+            return false;
+        }
+    }
+}
+
+
+
 static const struct stream_class stream_fd_class = {
     "fd",                       /* name */
     false,                      /* needs_probes */
@@ -205,6 +285,8 @@ static const struct stream_class stream_fd_class = {
     NULL,                       /* run_wait */
     fd_wait,                    /* wait */
     fd_set_probe_interval,      /* set_probe_interval */
+    fd_enqueue,                 /* enqueue */
+    fd_flush,                   /* flush */
 };
 
 /* Passive file descriptor stream. */

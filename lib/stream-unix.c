@@ -140,5 +140,7 @@ const struct pstream_class punix_pstream_class = {
     NULL,
     NULL,
     NULL,
+    NULL,                       /* enqueue */
+    NULL,                       /* flush */
 };
 
