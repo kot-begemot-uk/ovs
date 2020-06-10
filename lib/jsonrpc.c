@@ -30,27 +30,22 @@
 #include "openvswitch/poll-loop.h"
 #include "reconnect.h"
 #include "stream.h"
+#include "stream-provider.h"
 #include "svec.h"
 #include "timeval.h"
+#include "async-io.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(jsonrpc);
 
 struct jsonrpc {
-    struct stream *stream;
     char *name;
     int status;
-
-    /* Input. */
-    struct byteq input;
-    uint8_t input_buffer[4096];
     struct json_parser *parser;
-
-    /* Output. */
-    struct ovs_list output;     /* Contains "struct ofpbuf"s. */
-    size_t output_count;        /* Number of elements in "output". */
-    size_t backlog;
+    struct async_data data;
 };
+
+#define MIN_IDLE_TIME 10
 
 /* Rate limit for error messages. */
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
@@ -58,6 +53,11 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 static struct jsonrpc_msg *jsonrpc_parse_received_message(struct jsonrpc *);
 static void jsonrpc_cleanup(struct jsonrpc *);
 static void jsonrpc_error(struct jsonrpc *, int error);
+
+static inline struct async_data *adata(struct jsonrpc *rpc) {
+    return &rpc->data;
+}
+
 
 /* This is just the same as stream_open() except that it uses the default
  * JSONRPC port if none is specified. */
@@ -86,10 +86,8 @@ jsonrpc_open(struct stream *stream)
 
     rpc = xzalloc(sizeof *rpc);
     rpc->name = xstrdup(stream_get_name(stream));
-    rpc->stream = stream;
-    byteq_init(&rpc->input, rpc->input_buffer, sizeof rpc->input_buffer);
-    ovs_list_init(&rpc->output);
-
+    async_init_data(adata(rpc), stream);
+    async_stream_enable(adata(rpc));
     return rpc;
 }
 
@@ -109,33 +107,22 @@ jsonrpc_close(struct jsonrpc *rpc)
 void
 jsonrpc_run(struct jsonrpc *rpc)
 {
+    int retval;
     if (rpc->status) {
         return;
     }
 
-    stream_run(rpc->stream);
-    while (!ovs_list_is_empty(&rpc->output)) {
-        struct ofpbuf *buf = ofpbuf_from_list(rpc->output.next);
-        int retval;
-
-        retval = stream_send(rpc->stream, buf->data, buf->size);
-        if (retval >= 0) {
-            rpc->backlog -= retval;
-            ofpbuf_pull(buf, retval);
-            if (!buf->size) {
-                ovs_list_remove(&buf->list_node);
-                rpc->output_count--;
-                ofpbuf_delete(buf);
-            }
-        } else {
+    async_stream_run(adata(rpc));
+    do {
+        retval = async_stream_flush(&rpc->data);
+        if (retval < 0) {
             if (retval != -EAGAIN) {
                 VLOG_WARN_RL(&rl, "%s: send error: %s",
                              rpc->name, ovs_strerror(-retval));
                 jsonrpc_error(rpc, -retval);
             }
-            break;
         }
-    }
+    } while (retval > 0);
 }
 
 /* Arranges for the poll loop to wake up when 'rpc' needs to perform
@@ -144,9 +131,13 @@ void
 jsonrpc_wait(struct jsonrpc *rpc)
 {
     if (!rpc->status) {
-        stream_run_wait(rpc->stream);
-        if (!ovs_list_is_empty(&rpc->output)) {
-            stream_send_wait(rpc->stream);
+        if (adata(rpc)->async_mode) {
+            async_recv_wait(adata(rpc));
+        } else {
+            stream_run_wait(rpc->data.stream);
+            if (!async_output_is_empty(adata(rpc))) {
+                stream_send_wait(async_get_stream(adata(rpc)));
+            }
         }
     }
 }
@@ -175,7 +166,7 @@ jsonrpc_get_status(const struct jsonrpc *rpc)
 size_t
 jsonrpc_get_backlog(const struct jsonrpc *rpc)
 {
-    return rpc->status ? 0 : rpc->backlog;
+    return rpc->status ? 0 : async_get_backlog(adata((struct jsonrpc *) rpc));
 }
 
 /* Returns the number of bytes that have been received on 'rpc''s underlying
@@ -183,7 +174,7 @@ jsonrpc_get_backlog(const struct jsonrpc *rpc)
 unsigned int
 jsonrpc_get_received_bytes(const struct jsonrpc *rpc)
 {
-    return rpc->input.head;
+    return async_get_input(adata((struct jsonrpc *) rpc))->head;
 }
 
 /* Returns 'rpc''s name, that is, the name returned by stream_get_name() for
@@ -234,13 +225,13 @@ jsonrpc_log_msg(const struct jsonrpc *rpc, const char *title,
  * buffered in 'rpc'.)
  *
  * Always takes ownership of 'msg', regardless of success. */
+
 int
 jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 {
     struct ofpbuf *buf;
     struct json *json;
     struct ds ds = DS_EMPTY_INITIALIZER;
-    size_t length;
 
     if (rpc->status) {
         jsonrpc_msg_destroy(msg);
@@ -251,24 +242,13 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     json = jsonrpc_msg_to_json(msg);
     json_to_ds(json, 0, &ds);
-    length = ds.length;
     json_destroy(json);
 
     buf = xmalloc(sizeof *buf);
     ofpbuf_use_ds(buf, &ds);
-    ovs_list_push_back(&rpc->output, &buf->list_node);
-    rpc->output_count++;
-    rpc->backlog += length;
+    async_stream_enqueue(adata(rpc), buf);
 
-    if (rpc->output_count >= 50) {
-        VLOG_INFO_RL(&rl, "excessive sending backlog, jsonrpc: %s, num of"
-                     " msgs: %"PRIuSIZE", backlog: %"PRIuSIZE".", rpc->name,
-                     rpc->output_count, rpc->backlog);
-    }
-
-    if (rpc->backlog == length) {
-        jsonrpc_run(rpc);
-    }
+    jsonrpc_run(rpc);
     return rpc->status;
 }
 
@@ -291,7 +271,7 @@ jsonrpc_send(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 int
 jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 {
-    int i;
+    int i, retval;
 
     *msgp = NULL;
     if (rpc->status) {
@@ -302,36 +282,32 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
         size_t n, used;
 
         /* Fill our input buffer if it's empty. */
-        if (byteq_is_empty(&rpc->input)) {
-            size_t chunk;
-            int retval;
-
-            chunk = byteq_headroom(&rpc->input);
-            retval = stream_recv(rpc->stream, byteq_head(&rpc->input), chunk);
-            if (retval < 0) {
-                if (retval == -EAGAIN) {
-                    return EAGAIN;
-                } else {
-                    VLOG_WARN_RL(&rl, "%s: receive error: %s",
-                                 rpc->name, ovs_strerror(-retval));
-                    jsonrpc_error(rpc, -retval);
-                    return rpc->status;
-                }
-            } else if (retval == 0) {
-                jsonrpc_error(rpc, EOF);
-                return EOF;
+        retval = async_stream_recv(adata(rpc));
+        if (retval < 0) {
+            if (retval == -EAGAIN) {
+                return EAGAIN;
+            } else {
+                VLOG_WARN_RL(&rl, "%s: receive error: %s",
+                             rpc->name, ovs_strerror(-retval));
+                jsonrpc_error(rpc, -retval);
+                return rpc->status;
             }
-            byteq_advance_head(&rpc->input, retval);
+        } else if (retval == 0) {
+            jsonrpc_error(rpc, EOF);
+            return EOF;
         }
 
         /* We have some input.  Feed it into the JSON parser. */
         if (!rpc->parser) {
             rpc->parser = json_parser_create(0);
         }
-        n = byteq_tailroom(&rpc->input);
+        n = byteq_tailroom(async_get_input(adata(rpc)));
+        if (n == 0) {
+            break;
+        }
         used = json_parser_feed(rpc->parser,
-                                (char *) byteq_tail(&rpc->input), n);
-        byteq_advance_tail(&rpc->input, used);
+                        (char *) byteq_tail(async_get_input(adata(rpc))), n);
+        byteq_advance_tail(async_get_input(adata(rpc)), used);
 
         /* If we have complete JSON, attempt to parse it as JSON-RPC. */
         if (json_parser_is_done(rpc->parser)) {
@@ -341,7 +317,7 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
             }
 
             if (rpc->status) {
-                const struct byteq *q = &rpc->input;
+                const struct byteq *q = async_get_input(adata(rpc));
                 if (q->head <= q->size) {
                     stream_report_content(q->buffer, q->head, STREAM_JSONRPC,
                                           &this_module, rpc->name);
@@ -359,10 +335,10 @@ jsonrpc_recv(struct jsonrpc *rpc, struct jsonrpc_msg **msgp)
 void
 jsonrpc_recv_wait(struct jsonrpc *rpc)
 {
-    if (rpc->status || !byteq_is_empty(&rpc->input)) {
+    if (rpc->status || !byteq_is_empty(async_get_input(adata(rpc)))) {
         poll_immediate_wake_at(rpc->name);
     } else {
-        stream_recv_wait(rpc->stream);
+        async_recv_wait(adata(rpc));
     }
 }
 
@@ -385,7 +361,7 @@ jsonrpc_send_block(struct jsonrpc *rpc, struct jsonrpc_msg *msg)
 
     for (;;) {
         jsonrpc_run(rpc);
-        if (ovs_list_is_empty(&rpc->output) || rpc->status) {
+        if (async_output_is_empty(adata(rpc)) || rpc->status) {
             return rpc->status;
         }
         jsonrpc_wait(rpc);
@@ -495,15 +471,14 @@ jsonrpc_error(struct jsonrpc *rpc, int error)
 static void
 jsonrpc_cleanup(struct jsonrpc *rpc)
 {
-    stream_close(rpc->stream);
-    rpc->stream = NULL;
+    async_stream_disable(adata(rpc));
+    stream_close(rpc->data.stream);
+    rpc->data.stream = NULL;
 
     json_parser_abort(rpc->parser);
     rpc->parser = NULL;
 
-    ofpbuf_list_delete(&rpc->output);
-    rpc->backlog = 0;
-    rpc->output_count = 0;
+    async_cleanup_data(adata(rpc));
 }
 
 static struct jsonrpc_msg *
@@ -998,12 +973,14 @@ jsonrpc_session_run(struct jsonrpc_session *s)
     }
 
     if (s->rpc) {
-        size_t backlog;
         int error;
+        bool active = async_get_active(adata(s->rpc));
 
-        backlog = jsonrpc_get_backlog(s->rpc);
         jsonrpc_run(s->rpc);
-        if (jsonrpc_get_backlog(s->rpc) < backlog) {
+
+        active |= async_get_active(adata(s->rpc));
+
+        if (active) {
             /* Data previously caught in a queue was successfully sent (or
              * there's an error, which we'll catch below.)
              *
@@ -1103,8 +1080,8 @@ jsonrpc_session_get_name(const struct jsonrpc_session *s)
 const char *
 jsonrpc_session_get_id(const struct jsonrpc_session *s)
 {
-    if (s->rpc && s->rpc->stream) {
-        return stream_get_peer_id(s->rpc->stream);
+    if (s->rpc && async_get_stream(adata(s->rpc))) {
+        return stream_get_peer_id(adata(s->rpc)->stream);
     } else {
         return NULL;
     }

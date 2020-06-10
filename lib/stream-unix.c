@@ -79,6 +79,8 @@ const struct stream_class unix_stream_class = {
     NULL,                       /* run_wait */
     NULL,                       /* wait */
     unix_set_probe_interval,
+    NULL,
+    NULL,
 };
 
 /* Passive UNIX socket. */

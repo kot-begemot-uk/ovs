@@ -540,6 +540,8 @@ ovsdb_jsonrpc_session_close(struct ovsdb_jsonrpc_session *s)
 static int
 ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
 {
+    struct jsonrpc_msg *msg;
+
     jsonrpc_session_run(s->js);
     if (s->js_seqno != jsonrpc_session_get_seqno(s->js)) {
         s->js_seqno = jsonrpc_session_get_seqno(s->js);
@@ -549,25 +551,20 @@ ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
     }
 
     ovsdb_jsonrpc_trigger_complete_done(s);
+    ovsdb_jsonrpc_monitor_flush_all(s);
 
-    if (!jsonrpc_session_get_backlog(s->js)) {
-        struct jsonrpc_msg *msg;
-
-        ovsdb_jsonrpc_monitor_flush_all(s);
-
-        msg = jsonrpc_session_recv(s->js);
-        if (msg) {
-            if (msg->type == JSONRPC_REQUEST) {
-                ovsdb_jsonrpc_session_got_request(s, msg);
-            } else if (msg->type == JSONRPC_NOTIFY) {
-                ovsdb_jsonrpc_session_got_notify(s, msg);
-            } else {
-                VLOG_WARN("%s: received unexpected %s message",
-                          jsonrpc_session_get_name(s->js),
-                          jsonrpc_msg_type_to_string(msg->type));
-                jsonrpc_session_force_reconnect(s->js);
-                jsonrpc_msg_destroy(msg);
-            }
+    msg = jsonrpc_session_recv(s->js);
+    if (msg) {
+        if (msg->type == JSONRPC_REQUEST) {
+            ovsdb_jsonrpc_session_got_request(s, msg);
+        } else if (msg->type == JSONRPC_NOTIFY) {
+            ovsdb_jsonrpc_session_got_notify(s, msg);
+        } else {
+            VLOG_WARN("%s: received unexpected %s message",
+                      jsonrpc_session_get_name(s->js),
+                      jsonrpc_msg_type_to_string(msg->type));
+            jsonrpc_session_force_reconnect(s->js);
+            jsonrpc_msg_destroy(msg);
         }
     }
     return jsonrpc_session_is_alive(s->js) ? 0 : ETIMEDOUT;
