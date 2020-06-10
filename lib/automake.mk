@@ -242,7 +242,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/perf-counter.c \
 	lib/stopwatch.h \
 	lib/stopwatch.c \
-	lib/poll-loop.c \
 	lib/process.c \
 	lib/process.h \
 	lib/pvector.c \
@@ -349,6 +348,7 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/route-table-stub.c \
 	lib/if-notifier-stub.c \
 	lib/stream-windows.c \
+	lib/poll-loop.c \
 	lib/strsep.c
 else
 lib_libopenvswitch_la_SOURCES += \
@@ -357,6 +357,7 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/signals.c \
 	lib/signals.h \
 	lib/socket-util-unix.c \
+	lib/poll-loop-unix.c \
 	lib/stream-unix.c
 endif
 
