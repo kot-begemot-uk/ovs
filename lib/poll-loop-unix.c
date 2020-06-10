@@ -89,7 +89,10 @@ bool poll_can_read(int fd)
     struct poll_node *node = find_poll_node(loop, fd);
 
     if (node) {
-        return (loop->watched[node->index].revents & POLLIN) != 0;
+        return (
+            loop->watched[node->index].revents &
+            (POLLIN | POLLHUP | POLLNVAL | POLLERR)
+        ) != 0;
     }
     return true;
 }
@@ -100,7 +103,10 @@ bool poll_can_write(int fd)
     struct poll_node *node = find_poll_node(loop, fd);
 
     if (node) {
-        return (loop->watched[node->index].revents & POLLOUT) != 0;
+        return (
+            loop->watched[node->index].revents &
+            (POLLOUT | POLLHUP | POLLNVAL | POLLERR)
+        ) != 0;
     }
     return true;
 }

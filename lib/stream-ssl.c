@@ -708,7 +708,7 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
         sslv->can_read = poll_can_read(sslv->fd);
     }
 
-    if (!sslv->can_read && (sslv->tx_want != SSL_READING) && (sslv->rx_want != SSL_READING)) {
+    if (!sslv->can_read) {
         return -EAGAIN;
     }
 
@@ -754,7 +754,7 @@ ssl_do_tx(struct stream *stream)
         if (!sslv->can_write) {
             sslv->can_write = poll_can_write(sslv->fd);
         }
-        if (!sslv->can_write && (sslv->tx_want != SSL_WRITING) && (sslv->rx_want != SSL_WRITING)) {
+        if (!sslv->can_write) {
             return EAGAIN;
         }
 
