@@ -76,6 +76,7 @@ const struct stream_class tcp_stream_class = {
     NULL,
     NULL,                       /* enqueue */
     NULL,                       /* flush */
+    NULL,                       /* flow_control */
 };
 
 /* Passive TCP. */

@@ -78,7 +78,10 @@ const struct stream_class unix_stream_class = {
     NULL,                       /* run */
     NULL,                       /* run_wait */
     NULL,                       /* wait */
-    unix_set_probe_interval,
+    unix_set_probe_interval,    
+    NULL,                       /* enqueue */
+    NULL,                       /* flush */
+    NULL,                       /* flow_control */
 };
 
 /* Passive UNIX socket. */
@@ -140,7 +143,5 @@ const struct pstream_class punix_pstream_class = {
     NULL,
     NULL,
     NULL,
-    NULL,                       /* enqueue */
-    NULL,                       /* flush */
 };
 

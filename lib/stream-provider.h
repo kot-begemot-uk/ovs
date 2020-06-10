@@ -159,6 +159,10 @@ struct stream_class {
      * The flush function must not block.  If buffers cannot be flushed
      * completely it should return "partial success" immediately. */
     bool (*flush)(struct stream *stream, int *retval);
+    /* Disable/enable flow control
+     *
+     * turn flow control on/off */
+    void (*flow_control)(struct stream *stream, bool value);
 };
 
 /* Passive listener for incoming stream connections.

@@ -377,6 +377,7 @@ const struct stream_class windows_stream_class = {
     NULL,
     NULL,                       /* enqueue */
     NULL,                       /* flush */
+    NULL,                       /* flow_control */
 };
 
 struct pwindows_pstream

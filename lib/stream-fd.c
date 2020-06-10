@@ -41,7 +41,7 @@ struct stream_fd
     struct stream stream;
     int fd;
     int fd_type;
-    bool can_read, can_write;
+    bool can_read, can_write, flow_control;
     struct ovs_list output;
     int queue_depth;
 };
@@ -75,6 +75,7 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     ovs_list_init(&s->output);
     s->can_read = true;
     s->can_write = true;
+    s->flow_control = true;
     *streamp = &s->stream;
     return 0;
 }
@@ -113,12 +114,16 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
     ssize_t retval;
     int error;
 
-    if (!s->can_read) {
-        s->can_read = poll_can_read(s->fd);
-    }
+    if (s->flow_control) {
 
-    if (!s->can_read) {
-        return -EAGAIN;
+        if (!s->can_read) {
+            s->can_read = poll_can_read(s->fd);
+        }
+
+        if (!s->can_read) {
+            return -EAGAIN;
+        }
+
     }
 
     retval = recv(s->fd, buffer, n, 0);
@@ -151,12 +156,15 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
-    if (!s->can_write) {
-        s->can_write = poll_can_write(s->fd);
-    }
+    if (s->flow_control) {
 
-    if (!s->can_write) {
-        return -EAGAIN;
+        if (!s->can_write) {
+            s->can_write = poll_can_write(s->fd);
+        }
+
+        if (!s->can_write) {
+            return -EAGAIN;
+        }
     }
 
     retval = send(s->fd, buffer, n, 0);
@@ -271,6 +279,12 @@ fd_flush(struct stream *stream, int *retval)
     }
 }
 
+static void fd_flow_control(struct stream *stream, bool value)
+{
+    struct stream_fd *sfd = stream_fd_cast(stream);
+
+    sfd->flow_control = value;
+}
 
 
 static const struct stream_class stream_fd_class = {
@@ -287,6 +301,7 @@ static const struct stream_class stream_fd_class = {
     fd_set_probe_interval,      /* set_probe_interval */
     fd_enqueue,                 /* enqueue */
     fd_flush,                   /* flush */
+    fd_flow_control,            /* flow_control */
 };
 
 /* Passive file descriptor stream. */

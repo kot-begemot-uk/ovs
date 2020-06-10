@@ -44,6 +44,7 @@ bool stream_set_probe_interval(struct stream *, int probe_interval);
 
 void stream_run(struct stream *);
 void stream_run_wait(struct stream *);
+void stream_flow_control(struct stream *, bool);
 
 enum stream_wait_type {
     STREAM_CONNECT,

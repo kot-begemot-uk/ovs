@@ -951,7 +951,8 @@ const struct stream_class ssl_stream_class = {
     ssl_wait,                   /* wait */
     ssl_set_probe_interval,     /* set_probe_interval */
     ssl_enqueue,                /* send_buf */
-    ssl_flush,
+    ssl_flush,                  /* flush */
+    NULL,                       /* ssl is never used for packets */
 };
 
 /* Passive SSL. */

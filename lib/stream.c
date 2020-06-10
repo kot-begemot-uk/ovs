@@ -442,6 +442,14 @@ bool stream_set_probe_interval(struct stream *stream, int probe_interval) {
     return false;
 }
 
+void
+stream_flow_control(struct stream *stream, bool value)
+{
+    if (stream->class->flow_control) {
+        (stream->class->flow_control)(stream, value);
+    }
+}
+
 
 void
 stream_connect_wait(struct stream *stream)

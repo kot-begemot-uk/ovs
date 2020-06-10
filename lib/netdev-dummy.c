@@ -431,6 +431,10 @@ dummy_packet_conn_set_config(struct dummy_packet_conn *conn,
         switch (error) {
         case 0:
             reconnect_connected(reconnect, time_msec());
+            /* we use this stream from more than one thread,
+             * turn off poll hint logic
+             */
+            stream_flow_control(active_stream, false);
             break;
 
         case EAGAIN:
@@ -511,6 +515,11 @@ OVS_REQUIRES(dev->mutex)
             switch (error) {
             case 0:
                 reconnect_connected(rconn->reconnect, time_msec());
+                /* we use this stream from more than one thread,
+                 * turn off poll hint logic
+                 */
+                stream_flow_control(rconn->rstream->stream, false);
+            break;
                 break;
 
             case EAGAIN:
