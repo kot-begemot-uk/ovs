@@ -755,7 +755,7 @@ ssl_do_tx(struct stream *stream)
             sslv->can_write = poll_can_write(sslv->fd);
         }
         if (!sslv->can_write && (sslv->tx_want != SSL_WRITING) && (sslv->rx_want != SSL_WRITING)) {
-            return -EAGAIN;
+            return EAGAIN;
         }
 
         int ret = SSL_write(sslv->ssl, sslv->txbuf->data, sslv->txbuf->size);
