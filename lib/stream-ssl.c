@@ -143,6 +143,7 @@ struct ssl_stream
      * deadlock and livelock situations above.
      */
     int rx_want, tx_want;
+    bool can_read, can_write;
 
     /* A few bytes of header data in case SSL negotiation fails. */
     uint8_t head[2];
@@ -304,6 +305,8 @@ new_ssl_stream(char *name, char *server_name, int fd, enum session_type type,
     sslv->rx_want = sslv->tx_want = SSL_NOTHING;
     sslv->session_nr = next_session_nr++;
     sslv->n_head = 0;
+    sslv->can_read = true;
+    sslv->can_write = true;
 
     if (VLOG_IS_DBG_ENABLED()) {
         SSL_set_msg_callback(ssl, ssl_protocol_cb);
@@ -697,6 +700,14 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
     /* Behavior of zero-byte SSL_read is poorly defined. */
     ovs_assert(n > 0);
 
+    if (!sslv->can_read) {
+        sslv->can_read = poll_can_read(sslv->fd);
+    }
+
+    if (!sslv->can_read && (sslv->tx_want != SSL_READING) && (sslv->rx_want != SSL_READING)) {
+        return -EAGAIN;
+    }
+
     old_state = SSL_get_state(sslv->ssl);
     ret = SSL_read(sslv->ssl, buffer, n);
     if (old_state != SSL_get_state(sslv->ssl)) {
@@ -711,8 +722,12 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
         if (error == SSL_ERROR_ZERO_RETURN) {
             return 0;
         } else {
-            return -interpret_ssl_error("SSL_read", ret, error,
+            ret = -interpret_ssl_error("SSL_read", ret, error,
                                         &sslv->rx_want);
+            if (ret == -EAGAIN) {
+                sslv->can_read = false;
+            }
+            return ret;
         }
     }
 }
@@ -731,6 +746,14 @@ ssl_do_tx(struct stream *stream)
 
     for (;;) {
         int old_state = SSL_get_state(sslv->ssl);
+
+        if (!sslv->can_write) {
+            sslv->can_write = poll_can_write(sslv->fd);
+        }
+        if (!sslv->can_write && (sslv->tx_want != SSL_WRITING) && (sslv->rx_want != SSL_WRITING)) {
+            return -EAGAIN;
+        }
+
         int ret = SSL_write(sslv->ssl, sslv->txbuf->data, sslv->txbuf->size);
         if (old_state != SSL_get_state(sslv->ssl)) {
             sslv->rx_want = SSL_NOTHING;
@@ -747,8 +770,12 @@ ssl_do_tx(struct stream *stream)
                 VLOG_WARN_RL(&rl, "SSL_write: connection closed");
                 return EPIPE;
             } else {
-                return interpret_ssl_error("SSL_write", ret, ssl_error,
+                ret = interpret_ssl_error("SSL_write", ret, ssl_error,
                                            &sslv->tx_want);
+                if (ret == EAGAIN) {
+                    sslv->can_write = false;
+                }
+                return ret;
             }
         }
     }

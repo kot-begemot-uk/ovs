@@ -45,6 +45,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 
 /* Schedule events to wake up the following poll_block().
  *
@@ -72,6 +74,9 @@ void poll_timer_wait_until_at(long long int msec, const char *where);
 
 void poll_immediate_wake_at(const char *where);
 #define poll_immediate_wake() poll_immediate_wake_at(OVS_SOURCE_LOCATOR)
+
+bool poll_can_read(int fd);
+bool poll_can_write(int fd);
 
 /* Wait until an event occurs. */
 void poll_block(void);

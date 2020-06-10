@@ -40,6 +40,7 @@ struct stream_fd
     struct stream stream;
     int fd;
     int fd_type;
+    bool can_read, can_write;
 };
 
 static const struct stream_class stream_fd_class;
@@ -67,6 +68,8 @@ new_fd_stream(char *name, int fd, int connect_status, int fd_type,
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
     s->fd = fd;
     s->fd_type = fd_type;
+    s->can_read = true;
+    s->can_write = true;
     *streamp = &s->stream;
     return 0;
 }
@@ -104,6 +107,14 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    if (!s->can_read) {
+        s->can_read = poll_can_read(s->fd);
+    }
+
+    if (!s->can_read) {
+        return -EAGAIN;
+    }
+
     retval = recv(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
@@ -114,6 +125,8 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
 #endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "recv: %s", sock_strerror(error));
+        } else {
+            s->can_read = false;
         }
         return -error;
     }
@@ -127,6 +140,14 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
     ssize_t retval;
     int error;
 
+    if (!s->can_write) {
+        s->can_write = poll_can_write(s->fd);
+    }
+
+    if (!s->can_write) {
+        return -EAGAIN;
+    }
+
     retval = send(s->fd, buffer, n, 0);
     if (retval < 0) {
         error = sock_errno();
@@ -137,6 +158,8 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
 #endif
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "send: %s", sock_strerror(error));
+        } else {
+            s->can_write = false;
         }
         return -error;
     }

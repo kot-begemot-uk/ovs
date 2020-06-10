@@ -77,6 +77,17 @@ find_poll_node(struct poll_loop *loop, int fd, HANDLE wevent)
     return NULL;
 }
 
+bool poll_can_read(int fd)
+{
+    return true;
+}
+
+bool poll_can_write(int fd)
+{
+    return true;
+}
+
+
 /* On Windows system:
  *
  *     If 'fd' is specified, create a new 'wevent'. Association of 'fd' and

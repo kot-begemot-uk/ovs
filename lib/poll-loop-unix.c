@@ -83,6 +83,28 @@ find_poll_node(struct poll_loop *loop, int fd)
     return NULL;
 }
 
+bool poll_can_read(int fd)
+{
+    struct poll_loop *loop = poll_loop();
+    struct poll_node *node = find_poll_node(loop, fd);
+
+    if (node) {
+        return (loop->watched[node->index].revents & POLLIN) != 0;
+    }
+    return true;
+}
+
+bool poll_can_write(int fd)
+{
+    struct poll_loop *loop = poll_loop();
+    struct poll_node *node = find_poll_node(loop, fd);
+
+    if (node) {
+        return (loop->watched[node->index].revents & POLLOUT) != 0;
+    }
+    return true;
+}
+
 /* On Unix based systems:
  *
  *     Registers 'fd' as waiting for the specified 'events' (which should be
