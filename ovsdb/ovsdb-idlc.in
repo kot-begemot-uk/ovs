@@ -254,6 +254,8 @@ const struct %(s)s *%(s)s_get_for_uuid(const struct ovsdb_idl *, const struct uu
 const struct %(s)s *%(s)s_table_get_for_uuid(const struct %(s)s_table *, const struct uuid *);
 const struct %(s)s *%(s)s_first(const struct ovsdb_idl *);
 const struct %(s)s *%(s)s_next(const struct %(s)s *);
+const struct %(s)s *%(s)s_parallel_first(const struct ovsdb_idl *, ssize_t job_id, ssize_t pool);
+const struct %(s)s *%(s)s_parallel_next(const struct %(s)s *, ssize_t pool);
 #define %(S)s_FOR_EACH(ROW, IDL) \\
         for ((ROW) = %(s)s_first(IDL); \\
              (ROW); \\
@@ -262,6 +264,10 @@ const struct %(s)s *%(s)s_next(const struct %(s)s *);
         for ((ROW) = %(s)s_first(IDL); \\
              (ROW) ? ((NEXT) = %(s)s_next(ROW), 1) : 0; \\
              (ROW) = (NEXT))
+#define %(S)s_PARALLEL_FOR_EACH(ROW, IDL, JOBID, POOL) \\
+        for ((ROW) = %(s)s_parallel_first(IDL, JOBID, POOL); \\
+             (ROW); \\
+             (ROW) = %(s)s_parallel_next(ROW, POOL))
 
 unsigned int %(s)s_get_seqno(const struct ovsdb_idl *);
 unsigned int %(s)s_row_get_seqno(const struct %(s)s *row, enum ovsdb_idl_change change);
@@ -692,12 +698,32 @@ const struct %(s)s *
     return %(s)s_cast(ovsdb_idl_first_row(idl, &%(p)stable_%(tl)s));
 }
 
+/* Returns a row in table "%(t)s" in 'idl', or a null pointer if that
+ * table is empty.
+ *
+ * Database tables are internally maintained as hash tables, so adding or
+ * removing rows while traversing the same table can cause some rows to be
+ * visited twice or not at apply. */
+const struct %(s)s *
+%(s)s_parallel_first(const struct ovsdb_idl *idl, ssize_t job_id, ssize_t pool)
+{
+    return %(s)s_cast(parallel_ovsdb_idl_first_row(idl, &%(p)stable_%(tl)s, job_id, pool));
+}
+
 /* Returns a row following 'row' within its table, or a null pointer if 'row'
  * is the last row in its table. */
 const struct %(s)s *
 %(s)s_next(const struct %(s)s *row)
 {
     return %(s)s_cast(ovsdb_idl_next_row(&row->header_));
+}
+
+/* Returns a row following 'row' within its table slice, or a null pointer if 'row'
+ * is the last row in its table slice. */
+const struct %(s)s *
+%(s)s_parallel_next(const struct %(s)s *row, ssize_t pool)
+{
+    return %(s)s_cast(parallel_ovsdb_idl_next_row(&row->header_, pool));
 }
 
 unsigned int %(s)s_get_seqno(const struct ovsdb_idl *idl)
