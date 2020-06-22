@@ -235,6 +235,12 @@ const struct ovsdb_idl_row *ovsdb_idl_first_row(
     const struct ovsdb_idl *, const struct ovsdb_idl_table_class *);
 const struct ovsdb_idl_row *ovsdb_idl_next_row(const struct ovsdb_idl_row *);
 
+const struct ovsdb_idl_row *parallel_ovsdb_idl_first_row(
+    const struct ovsdb_idl *, const struct ovsdb_idl_table_class *,
+    ssize_t job_id, ssize_t pool);
+const struct ovsdb_idl_row *parallel_ovsdb_idl_next_row(
+    const struct ovsdb_idl_row *, ssize_t pool);
+
 const struct ovsdb_datum *ovsdb_idl_read(const struct ovsdb_idl_row *,
                                          const struct ovsdb_idl_column *);
 const struct ovsdb_datum *ovsdb_idl_get(const struct ovsdb_idl_row *,
