@@ -95,6 +95,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dynamic-string.c \
 	lib/entropy.c \
 	lib/entropy.h \
+	lib/fasthmap.h \
+	lib/fasthmap.c \
 	lib/fat-rwlock.c \
 	lib/fat-rwlock.h \
 	lib/fatal-signal.c \
