@@ -45,6 +45,7 @@
 #include "svec.h"
 #include "util.h"
 #include "uuid.h"
+#include "fasthmap.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_idl);
@@ -3543,6 +3544,24 @@ ovsdb_idl_first_row(const struct ovsdb_idl *idl,
     return next_real_row(table, hmap_first(&table->rows));
 }
 
+/* Returns a row in 'table_class''s table slice in 'idl', or a null pointer
+ * if that table slice is empty.
+ *
+ * Database tables are internally maintained as hash tables, so adding or
+ * removing rows while traversing the same table can cause some rows to be
+ * visited twice or not at apply. */
+const struct ovsdb_idl_row *
+parallel_ovsdb_idl_first_row(const struct ovsdb_idl *idl,
+                    const struct ovsdb_idl_table_class *table_class,
+                    ssize_t job_id,
+                    ssize_t pool_size)
+{
+    struct ovsdb_idl_table *table = ovsdb_idl_table_from_class(idl,
+                                                               table_class);
+    return next_real_row(
+        table, parallel_hmap_first(&table->rows, job_id, pool_size));
+}
+
 /* Returns a row following 'row' within its table, or a null pointer if 'row'
  * is the last row in its table. */
 const struct ovsdb_idl_row *
@@ -3551,6 +3570,18 @@ ovsdb_idl_next_row(const struct ovsdb_idl_row *row)
     struct ovsdb_idl_table *table = row->table;
 
     return next_real_row(table, hmap_next(&table->rows, &row->hmap_node));
+}
+
+/* Returns a row following 'row' within its table slice, or a null pointer
+ *  if 'row' is the last row in its table slice. */
+const struct ovsdb_idl_row *
+parallel_ovsdb_idl_next_row(
+    const struct ovsdb_idl_row *row, ssize_t pool_size)
+{
+    struct ovsdb_idl_table *table = row->table;
+
+    return next_real_row(table,
+        parallel_hmap_next(&table->rows, &row->hmap_node, pool_size));
 }
 
 /* Reads and returns the value of 'column' within 'row'.  If an ongoing
