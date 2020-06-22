@@ -81,7 +81,7 @@ struct worker_pool *add_worker_pool(void *(*start)(void *));
 
 /* Setting this to true will make all processing threads exit */
 
-bool cease_fire(void);
+bool stop_parallel_processing(void);
 
 /* Build a hmap pre-sized for size elements */
 
@@ -109,7 +109,7 @@ void run_pool(struct worker_pool *pool);
  */
 
 void run_pool_hash(struct worker_pool *pool,
-                    struct hmap *result, struct hmap *result_frags);
+                   struct hmap *result, struct hmap *result_frags);
 
 /* Run a pool, merge results from list frags into a final list result.
  */
@@ -121,9 +121,10 @@ void run_pool_list(struct worker_pool *pool,
  */
 
 void run_pool_callback(struct worker_pool *pool, void *fin_result,
-                    void *result_frags,
-                    void (*helper_func)(struct worker_pool *pool,
-                        void *fin_result, void *result_frags, int index));
+                       void *result_frags,
+                       void (*helper_func)(struct worker_pool *pool,
+                                           void *fin_result, void *result_frags,
+                                           int index));
 
 
 /* Returns the first node in 'hmap' in the bucket in which the given 'hash'
@@ -164,7 +165,7 @@ parallel_hmap_first(const struct hmap *hmap, size_t job_id, size_t pool_size)
  */
 static inline struct hmap_node *
 parallel_hmap_next(const struct hmap *hmap,
-                        const struct hmap_node *node, ssize_t pool_size)
+                   const struct hmap_node *node, ssize_t pool_size)
 {
     return (node->next
             ? node->next

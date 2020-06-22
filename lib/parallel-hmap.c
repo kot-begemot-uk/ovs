@@ -104,7 +104,7 @@ static void setup_worker_pools(void) {
     fatal_signal_add_hook(worker_pool_hook, NULL, NULL, true);
 }
 
-bool cease_fire(void)
+bool stop_parallel_processing(void)
 {
     return workers_must_exit;
 }
@@ -195,12 +195,11 @@ fast_hmap_size_for(struct hmap *hmap, int size)
 /* Run a thread pool which uses a callback function to process results
  */
 
-void run_pool_callback(
-        struct worker_pool *pool,
-        void *fin_result,
-        void *result_frags,
-        void (*helper_func)(struct worker_pool *pool,
-            void *fin_result, void *result_frags, int index))
+void run_pool_callback(struct worker_pool *pool,
+                       void *fin_result, void *result_frags,
+                       void (*helper_func)(struct worker_pool *pool,
+                                           void *fin_result,
+                                           void *result_frags, int index))
 {
     int index, completed;
 
@@ -307,7 +306,8 @@ void fast_hmap_merge(struct hmap *dest, struct hmap *inc)
  */
 
 static void merge_hash_results(struct worker_pool *pool OVS_UNUSED,
-        void *fin_result, void *result_frags, int index)
+                               void *fin_result, void *result_frags,
+                               int index)
 {
     struct hmap *result = (struct hmap *)fin_result;
     struct hmap *res_frags = (struct hmap *)result_frags;
