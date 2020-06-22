@@ -17,6 +17,8 @@
 #ifndef HMAP_H
 #define HMAP_H 1
 
+#define OVS_HAS_PARALLEL_HMAP 1
+
 #include <stdbool.h>
 #include <stdlib.h>
 #include "openvswitch/util.h"
