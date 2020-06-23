@@ -37,6 +37,7 @@
 #include "jsonrpc-server.h"
 #include "monitor.h"
 #include "util.h"
+#include "fasthmap.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_monitor);
@@ -1139,6 +1140,127 @@ ovsdb_monitor_compose_update(
     return json;
 }
 
+/* To debug parallel processing set this to zero */
+
+#define PARALLEL_CUT_OFF 128
+
+struct monitor_cond_change_info {
+    struct ovsdb_monitor_table *mt;
+    struct ovsdb_monitor_session_condition *condition;
+    unsigned long int *changed;
+    struct ovs_list results;
+};
+
+struct mon_json_result {
+    struct ovs_list list_node;
+    const char *table_name;
+    const struct uuid *row_uuid;
+    struct json *row_json;
+};
+
+
+struct monitor_cond_change_pool {
+    void (*row_helper_func)(struct ovsdb_row *row,
+            struct monitor_cond_change_info *mi);
+    struct worker_pool *pool;
+};
+
+static void *monitor_cond_change_thread(void *arg) {
+    struct worker_control *control = (struct worker_control *) arg;
+    struct monitor_cond_change_pool *workload;
+    struct monitor_cond_change_info *mi;
+    struct ovsdb_row *row;
+    struct hmap *table_rows;
+    int bnum;
+
+
+    while (!seize_fire()) {
+        sem_wait(&control->fire);
+        workload = (struct monitor_cond_change_pool *) control->workload;
+        mi = (struct monitor_cond_change_info *) control->data;
+        if (mi && workload) {
+            table_rows = (struct hmap *) &mi->mt->table->rows;
+            for (bnum = control->id;
+                    bnum <= mi->mt->table->rows.mask;
+                    bnum += workload->pool->size)
+            {
+                HMAP_FOR_EACH_IN_PARALLEL (row, hmap_node, bnum, table_rows) {
+                    if (seize_fire()) {
+                        return NULL;
+                    }
+                        (workload->row_helper_func)(row, control->data);
+                }
+            }
+            atomic_store_relaxed(&control->finished, true);
+            atomic_thread_fence(memory_order_release);
+        }
+        sem_post(control->done);
+    }
+    return NULL;
+}
+
+static void ovsdb_monitor_process_one_row (
+        struct ovsdb_row *row,
+        struct monitor_cond_change_info *mi)
+{
+    struct json *row_json;
+    struct mon_json_result *temp;
+
+    row_json = ovsdb_monitor_compose_row_update2(
+            mi->mt,
+            mi->condition,
+            OVSDB_ROW,
+            row,
+            false,
+            mi->changed,
+            mi->mt->n_columns);
+    if (row_json) {
+        temp = xmalloc(sizeof(struct mon_json_result));
+        temp->table_name = mi->mt->table->schema->name;
+        temp->row_uuid = ovsdb_row_get_uuid(row);
+        temp->row_json = row_json;
+        ovs_list_push_back(&mi->results, &temp->list_node);
+    }
+}
+
+static void
+    ovsdb_monitor_compose_cond_change_update_generate_json(
+        struct json **json, struct json **table_json,
+        struct ovs_list *temp_result) {
+    struct mon_json_result * temp;
+
+    LIST_FOR_EACH_POP (temp, list_node, temp_result) {
+        ovsdb_monitor_add_json_row(json,
+                temp->table_name,
+                table_json,
+                temp->row_json,
+                temp->row_uuid);
+        free(temp);
+    }
+}
+
+static struct monitor_cond_change_pool *monitor_thread_pool = NULL;
+
+static void init_thread_pool(void) {
+
+    int index;
+
+    if (!monitor_thread_pool) {
+        monitor_thread_pool =
+            xmalloc(sizeof (struct monitor_cond_change_pool));
+        monitor_thread_pool->pool =
+            add_worker_pool(monitor_cond_change_thread);
+        monitor_thread_pool->row_helper_func =
+            ovsdb_monitor_process_one_row;
+
+        for (index = 0; index < monitor_thread_pool->pool->size; index++) {
+            monitor_thread_pool->pool->controls[index].workload =
+                monitor_thread_pool;
+        }
+    }
+}
+
+
 static struct json*
 ovsdb_monitor_compose_cond_change_update(
                     struct ovsdb_monitor *dbmon,
@@ -1147,13 +1269,33 @@ ovsdb_monitor_compose_cond_change_update(
     struct shash_node *node;
     struct json *json = NULL;
     size_t max_columns = ovsdb_monitor_max_columns(dbmon);
-    unsigned long int *changed = xmalloc(bitmap_n_bytes(max_columns));
+    int index;
+
+    init_thread_pool();
 
     SHASH_FOR_EACH (node, &dbmon->tables) {
         struct ovsdb_monitor_table *mt = node->data;
         struct ovsdb_row *row;
         struct json *table_json = NULL;
         struct ovsdb_condition *old_condition, *new_condition;
+        struct monitor_cond_change_info *mi;
+        struct ovs_list *combined_result = NULL;
+        struct ovs_list **results = NULL;
+
+
+        mi = xmalloc(sizeof(struct monitor_cond_change_info) *
+                monitor_thread_pool->pool->size);
+        results = xmalloc(sizeof(struct ovs_list *) *
+                monitor_thread_pool->pool->size);
+
+        for (index = 0; index < monitor_thread_pool->pool->size; index++) {
+            mi[index].changed = xmalloc(bitmap_n_bytes(max_columns));
+            mi[index].condition = condition;
+            mi[index].mt = mt;
+            ovs_list_init(&mi[index].results);
+            results[index] = &mi[index].results;
+            monitor_thread_pool->pool->controls[index].data = &mi[index];
+        }
 
         if (!ovsdb_monitor_get_table_conditions(mt,
                                                 condition,
@@ -1163,24 +1305,31 @@ ovsdb_monitor_compose_cond_change_update(
             /* Nothing to update on this table */
             continue;
         }
-
-        /* Iterate over all rows in table */
-        HMAP_FOR_EACH (row, hmap_node, &mt->table->rows) {
-            struct json *row_json;
-
-            row_json = ovsdb_monitor_compose_row_update2(mt, condition,
-                                                         OVSDB_ROW, row,
-                                                         false, changed,
-                                                         mt->n_columns);
-            if (row_json) {
-                ovsdb_monitor_add_json_row(&json, mt->table->schema->name,
-                                           &table_json, row_json,
-                                           ovsdb_row_get_uuid(row));
+        if (hmap_count(&mt->table->rows) < PARALLEL_CUT_OFF) {
+            /* Iterate over all rows in table - single threaded */
+            HMAP_FOR_EACH (row, hmap_node, &mt->table->rows) {
+                ovsdb_monitor_process_one_row (row, &mi[0]);
             }
+            if (!ovs_list_is_empty(&mi[0].results)) {
+                ovsdb_monitor_compose_cond_change_update_generate_json(
+                    &json, &table_json, &mi[0].results);
+            }
+        } else {
+            run_pool_list(
+                monitor_thread_pool->pool,
+                &combined_result,
+                results);
+            ovsdb_monitor_compose_cond_change_update_generate_json(
+                    &json, &table_json, combined_result);
         }
         ovsdb_monitor_table_condition_updated(mt, condition);
+
+        free(results);
+        for (index = 0; index < monitor_thread_pool->pool->size; index++) {
+            free(mi[index].changed);
+        }
+        free(mi);
     }
-    free(changed);
 
     return json;
 }
