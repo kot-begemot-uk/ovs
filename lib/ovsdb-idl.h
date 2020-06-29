@@ -64,6 +64,7 @@ struct ovsdb_idl *ovsdb_idl_create_unconnected(
     const struct ovsdb_idl_class *, bool monitor_everything_by_default);
 void ovsdb_idl_set_remote(struct ovsdb_idl *, const char *, bool);
 void ovsdb_idl_set_shuffle_remotes(struct ovsdb_idl *, bool);
+void ovsdb_idl_reset_min_index(struct ovsdb_idl *);
 void ovsdb_idl_destroy(struct ovsdb_idl *);
 
 void ovsdb_idl_set_leader_only(struct ovsdb_idl *, bool leader_only);
@@ -233,6 +234,12 @@ const struct ovsdb_idl_row *ovsdb_idl_get_row_for_uuid(
 const struct ovsdb_idl_row *ovsdb_idl_first_row(
     const struct ovsdb_idl *, const struct ovsdb_idl_table_class *);
 const struct ovsdb_idl_row *ovsdb_idl_next_row(const struct ovsdb_idl_row *);
+
+const struct ovsdb_idl_row *parallel_ovsdb_idl_first_row(
+    const struct ovsdb_idl *, const struct ovsdb_idl_table_class *,
+    ssize_t job_id, ssize_t pool);
+const struct ovsdb_idl_row *parallel_ovsdb_idl_next_row(
+    const struct ovsdb_idl_row *, ssize_t pool);
 
 const struct ovsdb_datum *ovsdb_idl_read(const struct ovsdb_idl_row *,
                                          const struct ovsdb_idl_column *);
