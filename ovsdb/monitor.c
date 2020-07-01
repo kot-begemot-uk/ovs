@@ -1114,7 +1114,7 @@ ovsdb_monitor_add_json_row(struct json **json, const char *table_name,
 
 /* To debug parallel processing set this to zero */
 
-#define PARALLEL_CUT_OFF 64
+#define PARALLEL_CUT_OFF 512
 
 struct mon_json_result {
     struct ovs_list list_node;
