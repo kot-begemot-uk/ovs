@@ -38,7 +38,7 @@ byteq_init(struct byteq *q, uint8_t *buffer, size_t size)
 
 /* Returns the number of bytes current queued in 'q'. */
 int
-byteq_used(struct byteq *q)
+byteq_used(const struct byteq *q)
 {
     atomic_int retval;
     atomic_read_relaxed(&q->used, &retval);
@@ -47,7 +47,7 @@ byteq_used(struct byteq *q)
 
 /* Returns the number of bytes that can be added to 'q' without overflow. */
 int
-byteq_avail(struct byteq *q)
+byteq_avail(const struct byteq *q)
 {
     return q->size - byteq_used(q);
 }
@@ -55,7 +55,7 @@ byteq_avail(struct byteq *q)
 /* Returns true if no bytes are queued in 'q',
  * false if at least one byte is queued.  */
 bool
-byteq_is_empty(struct byteq *q)
+byteq_is_empty(const struct byteq *q)
 {
     return !byteq_used(q);
 }
@@ -63,7 +63,7 @@ byteq_is_empty(struct byteq *q)
 /* Returns true if 'q' has no room to queue additional bytes,
  * false if 'q' has room for at least one more byte.  */
 bool
-byteq_is_full(struct byteq *q)
+byteq_is_full(const struct byteq *q)
 {
     return !byteq_avail(q);
 }

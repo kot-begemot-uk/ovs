@@ -34,10 +34,10 @@ struct byteq {
 };
 
 void byteq_init(struct byteq *, uint8_t *buffer, size_t size);
-int byteq_used(struct byteq *);
-int byteq_avail(struct byteq *);
-bool byteq_is_empty(struct byteq *);
-bool byteq_is_full(struct byteq *);
+int byteq_used(const struct byteq *);
+int byteq_avail(const struct byteq *);
+bool byteq_is_empty(const struct byteq *);
+bool byteq_is_full(const struct byteq *);
 void byteq_put(struct byteq *, uint8_t c);
 void byteq_putn(struct byteq *, const void *, size_t n);
 void byteq_put_string(struct byteq *, const char *);
