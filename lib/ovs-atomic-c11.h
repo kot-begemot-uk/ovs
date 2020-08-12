@@ -28,8 +28,7 @@
 #define atomic_read(SRC, DST) \
     atomic_read_explicit(SRC, DST, memory_order_seq_cst)
 #define atomic_read_explicit(SRC, DST, ORDER)   \
-    (*(DST) = atomic_load_explicit(SRC, ORDER), \
-     (void) 0)
+    (*(DST) = atomic_load_explicit(SRC, ORDER))
 
 #define atomic_add(RMW, ARG, ORIG) \
     atomic_add_explicit(RMW, ARG, ORIG, memory_order_seq_cst)
