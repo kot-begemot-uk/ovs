@@ -2431,7 +2431,7 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
     }
     vid = out_xvlan.v[0].vid;
     if (ovs_list_is_empty(&out_xbundle->xports)) {
-        /* Partially configured bundle with no slaves.  Drop the packet. */
+        /* Partially configured bundle with no members.  Drop the packet. */
         return;
     } else if (!out_xbundle->bond) {
         xport = CONTAINER_OF(ovs_list_front(&out_xbundle->xports), struct xport,
@@ -2456,12 +2456,12 @@ output_normal(struct xlate_ctx *ctx, const struct xbundle *out_xbundle,
             }
         }
 
-        ofport = bond_choose_output_slave(out_xbundle->bond,
-                                          &ctx->xin->flow, wc, vid);
+        ofport = bond_choose_output_member(out_xbundle->bond,
+                                           &ctx->xin->flow, wc, vid);
         xport = xport_lookup(ctx->xcfg, ofport);
 
         if (!xport) {
-            /* No slaves enabled, so drop packet. */
+            /* No member interfaces enabled, so drop packet. */
             return;
         }
 
@@ -3379,11 +3379,11 @@ process_special(struct xlate_ctx *ctx, const struct xport *xport)
         if (packet) {
             lacp_may_enable = lacp_process_packet(xport->xbundle->lacp,
                                                   xport->ofport, packet);
-            /* Update LACP status in bond-slave to avoid packet-drops until
-             * LACP state machine is run by the main thread. */
+            /* Update LACP status in bond-member to avoid packet-drops
+             * until LACP state machine is run by the main thread. */
             if (xport->xbundle->bond && lacp_may_enable) {
-                bond_slave_set_may_enable(xport->xbundle->bond, xport->ofport,
-                                          lacp_may_enable);
+                bond_member_set_may_enable(xport->xbundle->bond, xport->ofport,
+                                           lacp_may_enable);
             }
         }
         slow = SLOW_LACP;
@@ -4207,7 +4207,17 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
         /* Commit accumulated flow updates before output. */
         xlate_commit_actions(ctx);
 
-        if (xr) {
+        if (xr && bond_use_lb_output_action(xport->xbundle->bond)) {
+            /*
+             * If bond mode is balance-tcp and optimize balance tcp is enabled
+             * then use the hash directly for member selection and avoid
+             * recirculation.
+             *
+             * Currently support for netdev datapath only.
+             */
+            nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_LB_OUTPUT,
+                           xr->recirc_id);
+        } else if (xr) {
             /* Recirculate the packet. */
             struct ovs_action_hash *act_hash;
 
@@ -5381,7 +5391,7 @@ xlate_set_queue_action(struct xlate_ctx *ctx, uint32_t queue_id)
 }
 
 static bool
-slave_enabled_cb(ofp_port_t ofp_port, void *xbridge_)
+member_enabled_cb(ofp_port_t ofp_port, void *xbridge_)
 {
     const struct xbridge *xbridge = xbridge_;
     struct xport *port;
@@ -5410,7 +5420,7 @@ xlate_bundle_action(struct xlate_ctx *ctx,
 {
     ofp_port_t port;
 
-    port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, slave_enabled_cb,
+    port = bundle_execute(bundle, &ctx->xin->flow, ctx->wc, member_enabled_cb,
                           CONST_CAST(struct xbridge *, ctx->xbridge));
     if (bundle->dst.field) {
         nxm_reg_load(&bundle->dst, ofp_to_u16(port), &ctx->xin->flow, ctx->wc);
@@ -7310,7 +7320,8 @@ count_output_actions(const struct ofpbuf *odp_actions)
     int n = 0;
 
     NL_ATTR_FOR_EACH_UNSAFE (a, left, odp_actions->data, odp_actions->size) {
-        if (a->nla_type == OVS_ACTION_ATTR_OUTPUT) {
+        if ((a->nla_type == OVS_ACTION_ATTR_OUTPUT) ||
+            (a->nla_type == OVS_ACTION_ATTR_LB_OUTPUT)) {
             n++;
         }
     }

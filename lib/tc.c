@@ -65,12 +65,6 @@ VLOG_DEFINE_THIS_MODULE(tc);
 
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(60, 5);
 
-enum tc_offload_policy {
-    TC_POLICY_NONE,
-    TC_POLICY_SKIP_SW,
-    TC_POLICY_SKIP_HW
-};
-
 static enum tc_offload_policy tc_policy = TC_POLICY_NONE;
 
 struct tc_pedit_key_ex {
@@ -1726,8 +1720,10 @@ nl_parse_single_action(struct nlattr *action, struct tc_flower *flower,
     }
 
     bs = nl_attr_get_unspec(stats_attrs[TCA_STATS_BASIC], sizeof *bs);
-    put_32aligned_u64(&stats->n_packets, bs->packets);
-    put_32aligned_u64(&stats->n_bytes, bs->bytes);
+    if (bs->packets) {
+        put_32aligned_u64(&stats->n_packets, bs->packets);
+        put_32aligned_u64(&stats->n_bytes, bs->bytes);
+    }
 
     return 0;
 }
@@ -2755,6 +2751,7 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
     bool is_vlan = eth_type_vlan(flower->key.eth_type);
     bool is_qinq = is_vlan && eth_type_vlan(flower->key.encap_eth_type[0]);
     bool is_mpls = eth_type_mpls(flower->key.eth_type);
+    enum tc_offload_policy policy = flower->tc_policy;
     int err;
 
     /* need to parse acts first as some acts require changing the matching
@@ -2880,7 +2877,11 @@ nl_msg_put_flower_options(struct ofpbuf *request, struct tc_flower *flower)
         }
     }
 
-    nl_msg_put_u32(request, TCA_FLOWER_FLAGS, tc_get_tc_cls_policy(tc_policy));
+    if (policy == TC_POLICY_NONE) {
+        policy = tc_policy;
+    }
+
+    nl_msg_put_u32(request, TCA_FLOWER_FLAGS, tc_get_tc_cls_policy(policy));
 
     if (flower->tunnel) {
         nl_msg_put_flower_tunnel(request, flower);

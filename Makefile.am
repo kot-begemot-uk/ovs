@@ -46,7 +46,7 @@ AM_CPPFLAGS += -DNDEBUG
 AM_CFLAGS += -fomit-frame-pointer
 endif
 
-AM_CTAGSFLAGS = $(OVS_CTAGS_IDENTIFIERS_LIST)
+AM_CTAGSFLAGS = -I "$(OVS_CTAGS_IDENTIFIERS_LIST)"
 
 if WIN32
 psep=";"
@@ -276,7 +276,7 @@ static-check:
 	fi
 .PHONY: static-check
 
-# Check that assert.h is not used outside a whitelist of files.
+# Check that assert.h is not used (outside a small set of files).
 ALL_LOCAL += check-assert-h-usage
 check-assert-h-usage:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
@@ -323,7 +323,7 @@ check-tabs:
 	if test -e .git && (git --version) >/dev/null 2>&1 && \
 	  grep -ln "^	" \
 	    `git ls-files \
-	      | grep -v -f build-aux/initial-tab-whitelist` /dev/null \
+	      | grep -v -f build-aux/initial-tab-allowed-files` /dev/null \
 	      | $(EGREP) -v ':[ 	]*/?\*'; \
 	then \
 	  echo "See above for files that use tabs for indentation."; \
@@ -336,16 +336,16 @@ ALL_LOCAL += thread-safety-check
 thread-safety-check:
 	@cd $(srcdir); \
 	if test -e .git && (git --version) >/dev/null 2>&1 && \
-	  grep -n -f build-aux/thread-safety-blacklist \
+	  grep -n -f build-aux/thread-safety-forbidden \
 	    `git ls-files | grep '\.[ch]$$' \
 	      | $(EGREP) -v '^datapath|^lib/sflow|^third-party'` /dev/null \
 	      | $(EGREP) -v ':[ 	]*/?\*'; \
 	then \
 	  echo "See above for list of calls to functions that are"; \
-	  echo "blacklisted due to thread safety issues"; \
+	  echo "forbidden due to thread safety issues"; \
 	  exit 1; \
 	fi
-EXTRA_DIST += build-aux/thread-safety-blacklist
+EXTRA_DIST += build-aux/thread-safety-forbidden
 .PHONY: thread-safety-check
 
 # Check that "ip" is used in preference to "ifconfig", because
@@ -412,8 +412,8 @@ flake8-check: $(FLAKE8_PYFILES)
 endif
 CLEANFILES += flake8-check
 
-include $(srcdir)/manpages.mk
-$(srcdir)/manpages.mk: $(MAN_ROOTS) build-aux/sodepends.py python/build/soutil.py
+-include manpages.mk
+manpages.mk: $(MAN_ROOTS) build-aux/sodepends.py python/build/soutil.py
 	@PYTHONPATH=$$PYTHONPATH$(psep)$(srcdir)/python $(PYTHON3) $(srcdir)/build-aux/sodepends.py -I. -I$(srcdir) $(MAN_ROOTS) >$(@F).tmp
 	@if cmp -s $(@F).tmp $@; then \
 	  touch $@; \
@@ -421,6 +421,7 @@ $(srcdir)/manpages.mk: $(MAN_ROOTS) build-aux/sodepends.py python/build/soutil.p
 	else \
 	  mv $(@F).tmp $@; \
 	fi
+CLEANFILES += manpages.mk
 CLEANFILES += manpage-dep-check
 
 if VSTUDIO_DDK

@@ -90,6 +90,7 @@ static unixctl_cb_func ovsdb_server_set_active_ovsdb_server_probe_interval;
 static unixctl_cb_func ovsdb_server_set_sync_exclude_tables;
 static unixctl_cb_func ovsdb_server_get_sync_exclude_tables;
 static unixctl_cb_func ovsdb_server_get_sync_status;
+static unixctl_cb_func ovsdb_server_get_db_storage_status;
 
 struct server_config {
     struct sset *remotes;
@@ -453,6 +454,9 @@ main(int argc, char *argv[])
     unixctl_command_register("ovsdb-server/sync-status", "",
                              0, 0, ovsdb_server_get_sync_status,
                              &server_config);
+    unixctl_command_register("ovsdb-server/get-db-storage-status", "DB", 1, 1,
+                             ovsdb_server_get_db_storage_status,
+                             &server_config);
 
     /* Simulate the behavior of OVS release prior to version 2.5 that
      * does not support the monitor_cond method.  */
@@ -543,13 +547,14 @@ parse_txn(struct server_config *config, struct db *db,
           const struct ovsdb_schema *schema, const struct json *txn_json,
           const struct uuid *txnid)
 {
-    if (schema && (!db->db->schema || strcmp(schema->version,
-                                             db->db->schema->version))) {
+    if (schema) {
         /* We're replacing the schema (and the data).  Destroy the database
          * (first grabbing its storage), then replace it with the new schema.
          * The transaction must also include the replacement data.
          *
-         * Only clustered database schema changes go through this path. */
+         * Only clustered database schema changes and snapshot installs
+         * go through this path.
+         */
         ovs_assert(txn_json);
         ovs_assert(ovsdb_storage_is_clustered(db->db->storage));
 
@@ -559,11 +564,15 @@ parse_txn(struct server_config *config, struct db *db,
             return error;
         }
 
-        ovsdb_jsonrpc_server_reconnect(
-            config->jsonrpc, false,
-            (db->db->schema
-             ? xasprintf("database %s schema changed", db->db->name)
-             : xasprintf("database %s connected to storage", db->db->name)));
+        if (!db->db->schema ||
+            strcmp(schema->version, db->db->schema->version)) {
+            ovsdb_jsonrpc_server_reconnect(
+                config->jsonrpc, false,
+                (db->db->schema
+                ? xasprintf("database %s schema changed", db->db->name)
+                : xasprintf("database %s connected to storage",
+                            db->db->name)));
+        }
 
         ovsdb_replace(db->db, ovsdb_create(ovsdb_schema_clone(schema), NULL));
 
@@ -1382,7 +1391,7 @@ ovsdb_server_set_sync_exclude_tables(struct unixctl_conn *conn,
 {
     struct server_config *config = config_;
 
-    char *err = set_blacklist_tables(argv[1], true);
+    char *err = set_excluded_tables(argv[1], true);
     if (!err) {
         free(*config->sync_exclude);
         *config->sync_exclude = xstrdup(argv[1]);
@@ -1394,7 +1403,7 @@ ovsdb_server_set_sync_exclude_tables(struct unixctl_conn *conn,
                                    config->all_dbs, server_uuid,
                                    *config->replication_probe_interval);
         }
-        err = set_blacklist_tables(argv[1], false);
+        err = set_excluded_tables(argv[1], false);
     }
     unixctl_command_reply(conn, err);
     free(err);
@@ -1406,7 +1415,7 @@ ovsdb_server_get_sync_exclude_tables(struct unixctl_conn *conn,
                                      const char *argv[] OVS_UNUSED,
                                      void *arg_ OVS_UNUSED)
 {
-    char *reply = get_blacklist_tables();
+    char *reply = get_excluded_tables();
     unixctl_command_reply(conn, reply);
     free(reply);
 }
@@ -1697,6 +1706,41 @@ ovsdb_server_get_sync_status(struct unixctl_conn *conn, int argc OVS_UNUSED,
 }
 
 static void
+ovsdb_server_get_db_storage_status(struct unixctl_conn *conn,
+                                   int argc OVS_UNUSED,
+                                   const char *argv[],
+                                   void *config_)
+{
+    struct server_config *config = config_;
+    struct shash_node *node;
+
+    node = shash_find(config->all_dbs, argv[1]);
+    if (!node) {
+        unixctl_command_reply_error(conn, "Failed to find the database.");
+        return;
+    }
+
+    struct db *db = node->data;
+
+    if (!db->db) {
+        unixctl_command_reply_error(conn, "Failed to find the database.");
+        return;
+    }
+
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    char *error = ovsdb_storage_get_error(db->db->storage);
+
+    if (!error) {
+        ds_put_cstr(&ds, "status: ok");
+    } else {
+        ds_put_format(&ds, "status: %s", error);
+        free(error);
+    }
+    unixctl_command_reply(conn, ds_cstr(&ds));
+    ds_destroy(&ds);
+}
+
+static void
 parse_options(int argc, char *argv[],
               struct sset *db_filenames, struct sset *remotes,
               char **unixctl_pathp, char **run_command,
@@ -1809,7 +1853,7 @@ parse_options(int argc, char *argv[],
             break;
 
         case OPT_SYNC_EXCLUDE: {
-            char *err = set_blacklist_tables(optarg, false);
+            char *err = set_excluded_tables(optarg, false);
             if (err) {
                 ovs_fatal(0, "%s", err);
             }

@@ -330,7 +330,8 @@ static void mirror_destroy(struct mirror *);
 static bool mirror_configure(struct mirror *);
 static void mirror_refresh_stats(struct mirror *);
 
-static void iface_configure_lacp(struct iface *, struct lacp_slave_settings *);
+static void iface_configure_lacp(struct iface *,
+                                 struct lacp_member_settings *);
 static bool iface_create(struct bridge *, const struct ovsrec_interface *,
                          const struct ovsrec_port *);
 static bool iface_is_internal(const struct ovsrec_interface *iface,
@@ -635,8 +636,10 @@ static void
 get_timeout_policy_from_ovsrec(struct simap *tp,
                                const struct ovsrec_ct_timeout_policy *tp_cfg)
 {
-    for (size_t i = 0; i < tp_cfg->n_timeouts; i++) {
-        simap_put(tp, tp_cfg->key_timeouts[i], tp_cfg->value_timeouts[i]);
+    if (tp_cfg) {
+        for (size_t i = 0; i < tp_cfg->n_timeouts; i++) {
+            simap_put(tp, tp_cfg->key_timeouts[i], tp_cfg->value_timeouts[i]);
+        }
     }
 }
 
@@ -1195,11 +1198,11 @@ port_configure(struct port *port)
     /* Get name. */
     s.name = port->name;
 
-    /* Get slaves. */
-    s.n_slaves = 0;
-    s.slaves = xmalloc(ovs_list_size(&port->ifaces) * sizeof *s.slaves);
+    /* Get members. */
+    s.n_members = 0;
+    s.members = xmalloc(ovs_list_size(&port->ifaces) * sizeof *s.members);
     LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
-        s.slaves[s.n_slaves++] = iface->ofp_port;
+        s.members[s.n_members++] = iface->ofp_port;
     }
 
     /* Get VLAN tag. */
@@ -1268,16 +1271,16 @@ port_configure(struct port *port)
     if (s.lacp) {
         size_t i = 0;
 
-        s.lacp_slaves = xmalloc(s.n_slaves * sizeof *s.lacp_slaves);
+        s.lacp_members = xmalloc(s.n_members * sizeof *s.lacp_members);
         LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
-            iface_configure_lacp(iface, &s.lacp_slaves[i++]);
+            iface_configure_lacp(iface, &s.lacp_members[i++]);
         }
     } else {
-        s.lacp_slaves = NULL;
+        s.lacp_members = NULL;
     }
 
     /* Get bond settings. */
-    if (s.n_slaves > 1) {
+    if (s.n_members > 1) {
         s.bond = &bond_settings;
         port_configure_bond(port, &bond_settings);
     } else {
@@ -1295,9 +1298,9 @@ port_configure(struct port *port)
 
     /* Clean up. */
     free(s.cvlans);
-    free(s.slaves);
+    free(s.members);
     free(s.trunks);
-    free(s.lacp_slaves);
+    free(s.lacp_members);
 }
 
 /* Pick local port hardware address and datapath ID for 'br'. */
@@ -2275,8 +2278,8 @@ find_local_hw_addr(const struct bridge *br, struct eth_addr *ea,
         } else {
             /* Choose the interface whose MAC address will represent the port.
              * The Linux kernel bonding code always chooses the MAC address of
-             * the first slave added to a bond, and the Fedora networking
-             * scripts always add slaves to a bond in alphabetical order, so
+             * the first member added to a bond, and the Fedora networking
+             * scripts always add members to a bond in alphabetical order, so
              * for compatibility we choose the interface with the name that is
              * first in alphabetical order. */
             LIST_FOR_EACH (candidate, port_elem, &port->ifaces) {
@@ -2959,7 +2962,7 @@ port_refresh_bond_status(struct port *port, bool force_update)
         return;
     }
 
-    if (bond_get_changed_active_slave(port->name, &mac, force_update)) {
+    if (bond_get_changed_active_member(port->name, &mac, force_update)) {
         struct ds mac_s;
 
         ds_init(&mac_s);
@@ -3015,10 +3018,10 @@ ofp12_controller_role_to_str(enum ofp12_controller_role role)
     switch (role) {
     case OFPCR12_ROLE_EQUAL:
         return "other";
-    case OFPCR12_ROLE_MASTER:
-        return "master";
-    case OFPCR12_ROLE_SLAVE:
-        return "slave";
+    case OFPCR12_ROLE_PRIMARY:
+        return "primary";
+    case OFPCR12_ROLE_SECONDARY:
+        return "secondary";
     case OFPCR12_ROLE_NOCHANGE:
     default:
         return NULL;
@@ -3907,49 +3910,48 @@ bridge_configure_remotes(struct bridge *br,
             && (!strncmp(c->target, "punix:", 6)
             || !strncmp(c->target, "unix:", 5))) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-            char *whitelist;
+            char *allowed;
 
             if (!strncmp(c->target, "unix:", 5)) {
                 /* Connect to a listening socket */
-                whitelist = xasprintf("unix:%s/", ovs_rundir());
+                allowed = xasprintf("unix:%s/", ovs_rundir());
                 if (strchr(c->target, '/') &&
-                   !equal_pathnames(c->target, whitelist,
-                     strlen(whitelist))) {
+                   !equal_pathnames(c->target, allowed, strlen(allowed))) {
                     /* Absolute path specified, but not in ovs_rundir */
                     VLOG_ERR_RL(&rl, "bridge %s: Not connecting to socket "
                                   "controller \"%s\" due to possibility for "
                                   "remote exploit.  Instead, specify socket "
-                                  "in whitelisted \"%s\" or connect to "
+                                  "in permitted directory \"%s\" or connect to "
                                   "\"unix:%s/%s.mgmt\" (which is always "
                                   "available without special configuration).",
-                                  br->name, c->target, whitelist,
+                                  br->name, c->target, allowed,
                                   ovs_rundir(), br->name);
-                    free(whitelist);
+                    free(allowed);
                     continue;
                 }
             } else {
-               whitelist = xasprintf("punix:%s/%s.",
+               allowed = xasprintf("punix:%s/%s.",
                                      ovs_rundir(), br->name);
-               if (!equal_pathnames(c->target, whitelist, strlen(whitelist))
-                   || strchr(c->target + strlen(whitelist), '/')) {
+               if (!equal_pathnames(c->target, allowed, strlen(allowed))
+                   || strchr(c->target + strlen(allowed), '/')) {
                    /* Prevent remote ovsdb-server users from accessing
                     * arbitrary Unix domain sockets and overwriting arbitrary
                     * local files. */
                    VLOG_ERR_RL(&rl, "bridge %s: Not adding Unix domain socket "
                                   "controller \"%s\" due to possibility of "
                                   "overwriting local files. Instead, specify "
-                                  "path in whitelisted format \"%s*\" or "
+                                  "path in permitted format \"%s*\" or "
                                   "connect to \"unix:%s/%s.mgmt\" (which is "
                                   "always available without special "
                                   "configuration).",
-                                  br->name, c->target, whitelist,
+                                  br->name, c->target, allowed,
                                   ovs_rundir(), br->name);
-                   free(whitelist);
+                   free(allowed);
                    continue;
                }
             }
 
-            free(whitelist);
+            free(allowed);
         }
 
         bridge_configure_local_iface_netdev(br, c);
@@ -4504,7 +4506,7 @@ port_configure_lacp(struct port *port, struct lacp_settings *s)
 }
 
 static void
-iface_configure_lacp(struct iface *iface, struct lacp_slave_settings *s)
+iface_configure_lacp(struct iface *iface, struct lacp_member_settings *s)
 {
     int priority, portid, key;
 
@@ -4589,6 +4591,10 @@ port_configure_bond(struct port *port, struct bond_settings *s)
 
     s->lacp_fallback_ab_cfg = smap_get_bool(&port->cfg->other_config,
                                        "lacp-fallback-ab", false);
+    s->primary = NULL;
+    if (s->balance == BM_AB || s->lacp_fallback_ab_cfg) {
+        s->primary = smap_get(&port->cfg->other_config, "bond-primary");
+    }
 
     LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
         netdev_set_miimon_interval(iface->netdev, miimon_interval);
@@ -4596,10 +4602,15 @@ port_configure_bond(struct port *port, struct bond_settings *s)
 
     mac_s = port->cfg->bond_active_slave;
     if (!mac_s || !ovs_scan(mac_s, ETH_ADDR_SCAN_FMT,
-                            ETH_ADDR_SCAN_ARGS(s->active_slave_mac))) {
+                            ETH_ADDR_SCAN_ARGS(s->active_member_mac))) {
         /* OVSDB did not store the last active interface */
-        s->active_slave_mac = eth_addr_zero;
+        s->active_member_mac = eth_addr_zero;
     }
+
+    /* lb_output action is disabled by default. */
+    s->use_lb_output_action = (s->balance == BM_TCP)
+                              && smap_get_bool(&port->cfg->other_config,
+                                               "lb-output-action", false);
 }
 
 /* Returns true if 'port' is synthetic, that is, if we constructed it locally

@@ -95,23 +95,12 @@ AC_DEFUN([OVS_CHECK_WIN32],
             AC_MSG_ERROR([Invalid --with-pthread value])
               ;;
             *)
-            if (cl) 2>&1 | grep 'x64' >/dev/null 2>&1; then
-              cl_cv_x64=yes
-            else
-              cl_cv_x64=no
-            fi
-            if test "$cl_cv_x64" = yes; then
-                PTHREAD_WIN32_DIR=$withval/lib/x64
-                PTHREAD_WIN32_DIR_DLL=/$(echo ${withval} | ${SED} -e 's/://')/dll/x64
-                PTHREAD_WIN32_DIR_DLL_WIN_FORM=$withval/dll/x64
-            else
-                PTHREAD_WIN32_DIR=$withval/lib/x86
-                PTHREAD_WIN32_DIR_DLL=/$(echo ${withval} | ${SED} -e 's/://')/dll/x86
-                PTHREAD_WIN32_DIR_DLL_WIN_FORM=$withval/dll/x86
-            fi
+            PTHREAD_WIN32_DIR=$withval/lib
+            PTHREAD_WIN32_DIR_DLL=/$(echo ${withval} | ${SED} -e 's/://')/bin
+            PTHREAD_WIN32_DIR_DLL_WIN_FORM=$withval/bin
             PTHREAD_INCLUDES=-I$withval/include
             PTHREAD_LDFLAGS=-L$PTHREAD_WIN32_DIR
-            PTHREAD_LIBS="-lpthreadVC2"
+            PTHREAD_LIBS="-lpthreadVC3"
             AC_SUBST([PTHREAD_WIN32_DIR_DLL_WIN_FORM])
             AC_SUBST([PTHREAD_WIN32_DIR_DLL])
             AC_SUBST([PTHREAD_INCLUDES])
@@ -146,51 +135,51 @@ dnl OVS_CHECK_WINDOWS
 dnl
 dnl Configure Visual Studio solution build
 AC_DEFUN([OVS_CHECK_VISUAL_STUDIO_DDK], [
-AC_ARG_WITH([vstudiotarget],
-         [AS_HELP_STRING([--with-vstudiotarget=target_type],
-            [Target type: Debug/Release])],
-         [
-            case "$withval" in
-            "Release") ;;
-            "Debug") ;;
-            *) AC_MSG_ERROR([No valid Visual Studio configuration found]) ;;
-            esac
+if test "$WIN32" = yes; then
+  AC_ARG_WITH([vstudiotarget],
+          [AS_HELP_STRING([--with-vstudiotarget=target_type],
+              [Target type: Debug/Release])],
+          [
+              case "$withval" in
+              "Release") ;;
+              "Debug") ;;
+              *) AC_MSG_ERROR([No valid Visual Studio configuration found]) ;;
+              esac
 
-            VSTUDIO_CONFIG=$withval
-         ], [
-            VSTUDIO_CONFIG=
-         ]
-      )
+              VSTUDIO_CONFIG=$withval
+          ], [
+              VSTUDIO_CONFIG="Debug"
+          ]
+        )
 
-  AC_SUBST([VSTUDIO_CONFIG])
+    AC_SUBST([VSTUDIO_CONFIG])
 
-AC_ARG_WITH([vstudiotargetver],
-         [AS_HELP_STRING([--with-vstudiotargetver=target_ver1,target_ver2],
-            [Target versions: Win8,Win8.1,Win10])],
-         [
-            targetver=`echo "$withval" | tr -s , ' ' `
-            for ver in $targetver; do
-                case "$ver" in
-                "Win8") VSTUDIO_WIN8=true ;;
-                "Win8.1")  VSTUDIO_WIN8_1=true ;;
-                "Win10") VSTUDIO_WIN10=true ;;
-                *) AC_MSG_ERROR([No valid Visual Studio target version found]) ;;
-                esac
-            done
+  AC_ARG_WITH([vstudiotargetver],
+          [AS_HELP_STRING([--with-vstudiotargetver=target_ver1,target_ver2],
+              [Target versions: Win8,Win8.1,Win10])],
+          [
+              targetver=`echo "$withval" | tr -s , ' ' `
+              for ver in $targetver; do
+                  case "$ver" in
+                  "Win8") VSTUDIO_WIN8=true ;;
+                  "Win8.1")  VSTUDIO_WIN8_1=true ;;
+                  "Win10") VSTUDIO_WIN10=true ;;
+                  *) AC_MSG_ERROR([No valid Visual Studio target version found]) ;;
+                  esac
+              done
 
-         ], [
-            VSTUDIO_WIN8=true
-            VSTUDIO_WIN8_1=true
-            VSTUDIO_WIN10=true
-         ]
-      )
-
-  AM_CONDITIONAL([VSTUDIO_WIN8], [test -n "$VSTUDIO_WIN8"])
-  AM_CONDITIONAL([VSTUDIO_WIN8_1], [test -n "$VSTUDIO_WIN8_1"])
-  AM_CONDITIONAL([VSTUDIO_WIN10], [test -n "$VSTUDIO_WIN10"])
-
-  AC_DEFINE([VSTUDIO_DDK], [1], [System uses the Visual Studio build target.])
-  AM_CONDITIONAL([VSTUDIO_DDK], [test -n "$VSTUDIO_CONFIG"])
+          ], [
+              VSTUDIO_WIN8=true
+              VSTUDIO_WIN8_1=true
+              VSTUDIO_WIN10=true
+          ]
+        )
+    AC_DEFINE([VSTUDIO_DDK], [1], [System uses the Visual Studio build target.])
+fi
+AM_CONDITIONAL([VSTUDIO_WIN8], [test -n "$VSTUDIO_WIN8"])
+AM_CONDITIONAL([VSTUDIO_WIN8_1], [test -n "$VSTUDIO_WIN8_1"])
+AM_CONDITIONAL([VSTUDIO_WIN10], [test -n "$VSTUDIO_WIN10"])
+AM_CONDITIONAL([VSTUDIO_DDK], [test -n "$VSTUDIO_CONFIG"])
 ])
 
 dnl Checks for Netlink support.
@@ -403,6 +392,40 @@ AC_DEFUN([OVS_CHECK_SPHINX],
      [SPHINXBUILD], [sphinx-build-3 sphinx-build-2 sphinx-build], [none])
    AC_ARG_VAR([SPHINXBUILD])
    AM_CONDITIONAL([HAVE_SPHINX], [test "$SPHINXBUILD" != none])])
+
+dnl Checks for binutils/assembler known issue with AVX512.
+dnl Due to backports, we probe assembling a reproducer instead of checking
+dnl binutils version string. More details, including ASM dumps and debug here:
+dnl   GCC: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90028
+dnl The checking of binutils funcationality instead of LD version is similar
+dnl to as how DPDK proposes to solve this issue:
+dnl   http://patches.dpdk.org/patch/71723/
+AC_DEFUN([OVS_CHECK_BINUTILS_AVX512],
+  [AC_CACHE_CHECK(
+    [binutils avx512 assembler checks passing],
+    [ovs_cv_binutils_avx512_good],
+    [dnl Assemble a short snippet to test for issue in "build-aux" dir:
+     mkdir -p build-aux
+     OBJFILE=build-aux/binutils_avx512_check.o
+     GATHER_PARAMS='0x8(,%ymm1,1),%ymm0{%k2}'
+     echo "vpgatherqq $GATHER_PARAMS" | as --64 -o $OBJFILE -
+     if ($CC -dumpmachine | grep x86_64) >/dev/null 2>&1; then
+       if (objdump -d  --no-show-raw-insn $OBJFILE | grep -q $GATHER_PARAMS) >/dev/null 2>&1; then
+         ovs_cv_binutils_avx512_good=yes
+         CFLAGS="$CFLAGS -DHAVE_LD_AVX512_GOOD"
+       else
+         ovs_cv_binutils_avx512_good=no
+         dnl Explicitly disallow avx512f to stop compiler auto-vectorizing
+         dnl and causing zmm usage with buggy binutils versions.
+         CFLAGS="$CFLAGS -mno-avx512f"
+       fi
+     else
+       dnl non x86_64 architectures don't have avx512, so not affected
+       ovs_cv_binutils_avx512_good=no
+     fi])
+     rm $OBJFILE
+   AM_CONDITIONAL([HAVE_LD_AVX512_GOOD],
+                  [test "$ovs_cv_binutils_avx512_good" = yes])])
 
 dnl Checks for dot.
 AC_DEFUN([OVS_CHECK_DOT],
