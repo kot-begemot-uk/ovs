@@ -1195,6 +1195,7 @@ ovsdb_monitor_compose_cond_change_update(
     }
     free(changed);
 
+    finish = time_usec();
     if (rows_processed) {
         VLOG_INFO("Time to compute cond update %ld, %lld, %f", rows_processed, finish - start, 1.0 * (finish - start)/rows_processed);
     }
