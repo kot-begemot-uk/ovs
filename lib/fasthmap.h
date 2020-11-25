@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef HMAP_HAS_PARALLEL_MACROS
-#define HMAP_HAS_PARALLEL_MACROS 1
+#ifndef FAST_HMAP_H
+#define FAST_HMAP_H 1
 
 /* if the parallel macros are defined by hmap.h or any other ovs define
  * we skip over the ovn specific definitions.
