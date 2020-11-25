@@ -1247,6 +1247,8 @@ ovsdb_monitor_compose_update(
 {
     struct json *json;
     size_t max_columns = ovsdb_monitor_max_columns(dbmon);
+    long long finish, start = time_usec();
+    ssize_t rows_processed = 0;
 
     json = NULL;
     struct ovsdb_monitor_change_set_for_table *mcst;
@@ -1254,6 +1256,7 @@ ovsdb_monitor_compose_update(
         struct ovsdb_monitor_row *row, *next;
         struct json *table_json = NULL;
 
+        rows_processed += hmap_count(&mcst->rows);
         if (hmap_count(&mcst->rows) < PARALLEL_CUT_OFF_A) {
             struct monitor_compose_update_info mci;
             struct ovs_list results = OVS_LIST_INITIALIZER(&results);
@@ -1316,7 +1319,11 @@ ovsdb_monitor_compose_update(
 
         }
     }
+    finish = time_usec();
 
+    if (rows_processed) {
+        VLOG_INFO("Time to compute update %ld, %lld, %f", rows_processed, finish - start, 1.0 * (finish - start)/rows_processed);
+    }
     return json;
 }
 
@@ -1429,6 +1436,8 @@ ovsdb_monitor_compose_cond_change_update(
     int index, count;
     struct monitor_cond_change_info *mi;
     struct ovs_list *results = NULL;
+    long long finish, start = time_usec();
+    ssize_t rows_processed = 0;
 
     init_cond_pool();
 
@@ -1468,6 +1477,7 @@ ovsdb_monitor_compose_cond_change_update(
             /* Nothing to update on this table */
             continue;
         }
+        rows_processed += hmap_count(&mt->table->rows);
         if (hmap_count(&mt->table->rows) < PARALLEL_CUT_OFF_B) {
             /* Iterate over all rows in table - single threaded */
             HMAP_FOR_EACH (row, hmap_node, &mt->table->rows) {
@@ -1494,6 +1504,11 @@ ovsdb_monitor_compose_cond_change_update(
 
     free(results);
     free(mi);
+
+    finish = time_usec();
+    if (rows_processed) {
+        VLOG_INFO("Time to compute cond update %ld, %lld, %f", rows_processed, finish - start, 1.0 * (finish - start)/rows_processed);
+    }
 
     return json;
 }
