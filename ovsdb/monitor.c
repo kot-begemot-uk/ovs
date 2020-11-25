@@ -1115,6 +1115,9 @@ ovsdb_monitor_compose_update(
     size_t max_columns = ovsdb_monitor_max_columns(dbmon);
     unsigned long int *changed = xmalloc(bitmap_n_bytes(max_columns));
 
+    long long finish, start = time_usec();
+    ssize_t rows_processed = 0;
+
     json = NULL;
     struct ovsdb_monitor_change_set_for_table *mcst;
     LIST_FOR_EACH (mcst, list_in_change_set, &mcs->change_set_for_tables) {
@@ -1126,6 +1129,7 @@ ovsdb_monitor_compose_update(
             struct json *row_json;
             row_json = (*row_update)(mt, condition, OVSDB_MONITOR_ROW, row,
                                      initial, changed, mcst->n_columns);
+            rows_processed ++;
             if (row_json) {
                 ovsdb_monitor_add_json_row(&json, mt->table->schema->name,
                                            &table_json, row_json,
@@ -1135,6 +1139,12 @@ ovsdb_monitor_compose_update(
     }
     free(changed);
 
+    finish = time_usec();
+
+    if (rows_processed) {
+        VLOG_INFO("Time to compute update %ld, %lld, %f", rows_processed, finish - start, 1.0 * (finish - start)/rows_processed);
+    }
+    
     return json;
 }
 
@@ -1147,6 +1157,9 @@ ovsdb_monitor_compose_cond_change_update(
     struct json *json = NULL;
     size_t max_columns = ovsdb_monitor_max_columns(dbmon);
     unsigned long int *changed = xmalloc(bitmap_n_bytes(max_columns));
+
+    long long finish, start = time_usec();
+    ssize_t rows_processed = 0;
 
     SHASH_FOR_EACH (node, &dbmon->tables) {
         struct ovsdb_monitor_table *mt = node->data;
@@ -1171,6 +1184,7 @@ ovsdb_monitor_compose_cond_change_update(
                                                          OVSDB_ROW, row,
                                                          false, changed,
                                                          mt->n_columns);
+            rows_processed ++;
             if (row_json) {
                 ovsdb_monitor_add_json_row(&json, mt->table->schema->name,
                                            &table_json, row_json,
@@ -1180,6 +1194,10 @@ ovsdb_monitor_compose_cond_change_update(
         ovsdb_monitor_table_condition_updated(mt, condition);
     }
     free(changed);
+
+    if (rows_processed) {
+        VLOG_INFO("Time to compute cond update %ld, %lld, %f", rows_processed, finish - start, 1.0 * (finish - start)/rows_processed);
+    }
 
     return json;
 }
