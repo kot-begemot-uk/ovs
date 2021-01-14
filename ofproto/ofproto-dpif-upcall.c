@@ -1084,7 +1084,7 @@ compose_slow_path(struct udpif *udpif, struct xlate_out *xout,
     }
 
     odp_put_userspace_action(pid, &cookie, sizeof cookie,
-                             ODPP_NONE, false, buf);
+                             ODPP_NONE, false, buf, NULL);
 
     if (meter_id != UINT32_MAX) {
         nl_msg_end_nested(buf, ac_offset);
@@ -2901,6 +2901,7 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
                     const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
+    uint64_t n_offloaded_flows;
     struct udpif *udpif;
 
     LIST_FOR_EACH (udpif, list_node, &all_udpifs) {
@@ -2915,6 +2916,10 @@ upcall_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
         ds_put_format(&ds, "  flows         : (current %lu)"
             " (avg %u) (max %u) (limit %u)\n", udpif_get_n_flows(udpif),
             udpif->avg_n_flows, udpif->max_n_flows, flow_limit);
+        if (!dpif_get_n_offloaded_flows(udpif->dpif, &n_offloaded_flows)) {
+            ds_put_format(&ds, "  offloaded flows : %"PRIu64"\n",
+                          n_offloaded_flows);
+        }
         ds_put_format(&ds, "  dump duration : %lldms\n", udpif->dump_duration);
         ds_put_format(&ds, "  ufid enabled : ");
         if (ufid_enabled) {
