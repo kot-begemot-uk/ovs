@@ -324,3 +324,29 @@ void run_pool_hash(
 {
     run_pool_callback(pool, result, result_frags, merge_hash_results);
 }
+
+/* Run a thread pool which gathers results in an array of lists.
+ * Merge results.
+ */
+
+static void merge_list_results(struct worker_pool *pool OVS_UNUSED,
+                               void *fin_result, void *result_frags,
+                               int index)
+{
+    struct ovs_list *result = (struct ovs_list *)fin_result;
+    struct ovs_list *res_frags = (struct ovs_list *)result_frags;
+
+    if (!ovs_list_is_empty(&res_frags[index])) {
+        ovs_list_splice(result->next,
+                ovs_list_front(&res_frags[index]), &res_frags[index]);
+    }
+}
+
+
+void run_pool_list(
+        struct worker_pool *pool,
+        struct ovs_list *result,
+        struct ovs_list *result_frags)
+{
+    run_pool_callback(pool, result, result_frags, merge_list_results);
+}

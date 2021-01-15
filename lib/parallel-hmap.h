@@ -111,6 +111,12 @@ void run_pool(struct worker_pool *pool);
 void run_pool_hash(struct worker_pool *pool,
                     struct hmap *result, struct hmap *result_frags);
 
+/* Run a pool, merge results from list frags into a final list result.
+ */
+
+void run_pool_list(struct worker_pool *pool,
+                    struct ovs_list *result, struct ovs_list *result_frags);
+
 /* Run a pool, call a callback function to perform processing of results.
  */
 
