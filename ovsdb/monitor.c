@@ -1462,7 +1462,7 @@ ovsdb_monitor_compose_cond_change_update(
                                                 &new_condition) ||
             !ovsdb_condition_cmp_3way(old_condition, new_condition)) {
             /* Nothing to update on this table */
-            continue;
+            goto cleanup_scratchpad;
         }
         if (hmap_count(&mt->table->rows) < PARALLEL_CUT_OFF_B) {
             /* Iterate over all rows in table - single threaded */
@@ -1483,6 +1483,7 @@ ovsdb_monitor_compose_cond_change_update(
         }
         ovsdb_monitor_table_condition_updated(mt, condition);
 
+cleanup_scratchpad:
         for (index = 0; index < count; index++) {
             free(mi[index].changed);
         }
