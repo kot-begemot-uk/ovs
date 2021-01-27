@@ -36,6 +36,10 @@
 
 VLOG_DEFINE_THIS_MODULE(parallel_hmap);
 
+#define WORKER_SEM_NAME "%x-%p-%x"
+#define MAIN_SEM_NAME "%x-%p-main"
+
+
 /* These are accessed under mutex inside add_worker_pool().
  * They do not need to be atomic.
  */
@@ -61,7 +65,10 @@ static int sembase;
 static void worker_pool_hook(void *aux OVS_UNUSED) {
     int i;
     static struct worker_pool *pool;
+    char sem_name[256];
+
     workers_must_exit = true;
+
     /* All workers must honour the must_exit flag and check for it regularly.
      * We can make it atomic and check it via atomics in workers, but that
      * is not really necessary as it is set just once - when the program
@@ -75,12 +82,14 @@ static void worker_pool_hook(void *aux OVS_UNUSED) {
         for (i = 0; i < pool->size ; i++) {
             sem_post(pool->controls[i].fire);
         }
-/*
         for (i = 0; i < pool->size ; i++) {
             sem_close(pool->controls[i].fire);
+            sprintf(sem_name, WORKER_SEM_NAME, sembase, pool, i);
+            sem_unlink(sem_name);
         }
         sem_close(pool->done);
-*/
+        sprintf(sem_name, MAIN_SEM_NAME, sembase, pool);
+        sem_unlink(sem_name);
     }
 }
 
@@ -141,9 +150,7 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
     struct worker_control *new_control;
     bool test = false;
     int i;
-    /*
     char sem_name[256];
-    */
 
 
     if (atomic_compare_exchange_strong(
@@ -159,14 +166,8 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
     if (can_parallelize) {
         new_pool = xmalloc(sizeof(struct worker_pool));
         new_pool->size = pool_size;
-        /*
-        sprintf(sem_name, "%x-%p-main", sembase, new_pool);
-        new_pool->done = sem_open(sem_name, O_CREAT);
-        sem_unlink(sem_name);
-        */
-
-        new_pool->done = xmalloc(sizeof(sem_t));
-        sem_init(new_pool->done, 0, 0);
+        sprintf(sem_name, MAIN_SEM_NAME, sembase, new_pool);
+        new_pool->done = sem_open(sem_name, O_CREAT, S_IRWXU, 0);
 
         ovs_list_push_back(&worker_pools, &new_pool->list_node);
 
@@ -175,11 +176,8 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
 
         for (i = 0; i < new_pool->size; i++) {
             new_control = &new_pool->controls[i];
-            /*
-            sprintf(sem_name, "%x-%p-%x", sembase, new_pool, i);
-            new_control->fire = sem_open(sem_name, O_CREAT);
-            sem_unlink(sem_name);
-            */
+            sprintf(sem_name, WORKER_SEM_NAME, sembase, new_pool, i);
+            new_control->fire = sem_open(sem_name, O_CREAT, S_IRWXU, 0);
             new_control->fire = xmalloc(sizeof(sem_t));
             sem_init(new_control->fire, 0, 0);
             new_control->id = i;
