@@ -75,10 +75,12 @@ static void worker_pool_hook(void *aux OVS_UNUSED) {
         for (i = 0; i < pool->size ; i++) {
             sem_post(pool->controls[i].fire);
         }
+/*
         for (i = 0; i < pool->size ; i++) {
             sem_close(pool->controls[i].fire);
         }
         sem_close(pool->done);
+*/
     }
 }
 
@@ -139,7 +141,9 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
     struct worker_control *new_control;
     bool test = false;
     int i;
+    /*
     char sem_name[256];
+    */
 
 
     if (atomic_compare_exchange_strong(
@@ -155,9 +159,14 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
     if (can_parallelize) {
         new_pool = xmalloc(sizeof(struct worker_pool));
         new_pool->size = pool_size;
+        /*
         sprintf(sem_name, "%x-%p-main", sembase, new_pool);
         new_pool->done = sem_open(sem_name, O_CREAT);
         sem_unlink(sem_name);
+        */
+
+        new_pool->done = xmalloc(sizeof(sem_t));
+        sem_init(new_pool->done, 0, 0);
 
         ovs_list_push_back(&worker_pools, &new_pool->list_node);
 
@@ -166,10 +175,13 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
 
         for (i = 0; i < new_pool->size; i++) {
             new_control = &new_pool->controls[i];
+            /*
             sprintf(sem_name, "%x-%p-%x", sembase, new_pool, i);
             new_control->fire = sem_open(sem_name, O_CREAT);
-            /* we do not want this visible to other processes */
             sem_unlink(sem_name);
+            */
+            new_control->fire = xmalloc(sizeof(sem_t));
+            sem_init(new_control->fire, 0, 0);
             new_control->id = i;
             new_control->done = new_pool->done;
             new_control->data = NULL;

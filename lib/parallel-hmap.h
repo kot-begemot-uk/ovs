@@ -175,8 +175,8 @@ parallel_hmap_next(const struct hmap *hmap,
 
 static inline void post_completed_work(struct worker_control *control)
 {
-    atomic_store_relaxed(&control->finished, true);
     atomic_thread_fence(memory_order_acq_rel);
+    atomic_store_relaxed(&control->finished, true);
     sem_post(control->done);
 }
 
