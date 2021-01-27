@@ -178,8 +178,6 @@ struct worker_pool *add_worker_pool(void *(*start)(void *)){
             new_control = &new_pool->controls[i];
             sprintf(sem_name, WORKER_SEM_NAME, sembase, new_pool, i);
             new_control->fire = sem_open(sem_name, O_CREAT, S_IRWXU, 0);
-            new_control->fire = xmalloc(sizeof(sem_t));
-            sem_init(new_control->fire, 0, 0);
             new_control->id = i;
             new_control->done = new_pool->done;
             new_control->data = NULL;

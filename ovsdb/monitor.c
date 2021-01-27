@@ -1396,7 +1396,7 @@ static void init_cond_pool(void) {
 
     int index;
 
-    if (can_parallelize_hashes() && (!monitor_cond_pool)) {
+    if (can_parallelize_hashes() && (monitor_cond_pool == NULL)) {
         monitor_cond_pool =
             xmalloc(sizeof(*monitor_cond_pool));
         monitor_cond_pool->pool =
@@ -1426,8 +1426,13 @@ ovsdb_monitor_compose_cond_change_update(
 
     init_cond_pool();
 
-    mi = xcalloc(sizeof(*mi), monitor_cond_pool->pool->size);
-    results = xcalloc(sizeof(*results), monitor_cond_pool->pool->size);
+    if (can_parallelize_hashes()) {
+        mi = xcalloc(sizeof(*mi), monitor_cond_pool->pool->size);
+        results = xcalloc(sizeof(*results), monitor_cond_pool->pool->size);
+    } else {
+        mi = xmalloc(sizeof(*mi));
+        results = xmalloc(sizeof(*results));
+    }
 
     SHASH_FOR_EACH (node, &dbmon->tables) {
         struct ovsdb_monitor_table *mt = node->data;
@@ -1449,7 +1454,10 @@ ovsdb_monitor_compose_cond_change_update(
             mi[index].mt = mt;
             ovs_list_init(&results[index]);
             mi[index].results = &results[index];
-            monitor_cond_pool->pool->controls[index].data = &mi[index];
+            if (can_parallelize_hashes() &&
+                    (hmap_count(&mt->table->rows) > PARALLEL_CUT_OFF_B)){
+                monitor_cond_pool->pool->controls[index].data = &mi[index];
+            }
         }
 
         if (!ovsdb_monitor_get_table_conditions(mt,
