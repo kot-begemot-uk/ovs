@@ -33,6 +33,10 @@ extern "C" {
 #include "openvswitch/thread.h"
 #include "ovs-atomic.h"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wthread-safety"
+#endif
 /* A version of the HMAP_FOR_EACH macro intended for iterating as part
  * of parallel processing.
  * Each worker thread has a different ThreadID in the range of 0..POOL_SIZE
@@ -221,6 +225,10 @@ static inline void init_hash_row_locks(struct hashrow_locks *hrl)
 }
 
 bool can_parallelize_hashes(void);
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #ifdef  __cplusplus
 }
